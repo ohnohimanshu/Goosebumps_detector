@@ -26,10 +26,10 @@ self.addEventListener('activate', (event) => {
     caches.keys().then(keys => {
       return Promise.all(
         keys.filter(key => key !== CACHE_NAME)
-           .map(key => {
-             console.log('[SW] Deleting old cache:', key);
-             return caches.delete(key);
-           })
+          .map(key => {
+            console.log('[SW] Deleting old cache:', key);
+            return caches.delete(key);
+          })
       );
     })
   );
@@ -37,6 +37,9 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  // ✅ Skip non-HTTP requests (like chrome-extension://)
+  if (!event.request.url.startsWith('http')) return;
+
   event.respondWith(
     caches.match(event.request)
       .then(cached => {
@@ -56,8 +59,6 @@ self.addEventListener('fetch', (event) => {
             return response;
           });
       })
-      .catch(() => {
-        return caches.match('./index.html');
-      })
+      .catch(() => caches.match('./index.html'))
   );
 });
