@@ -9,15 +9,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>CHILLER Mobile</title>
   
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="./icon-192.png">
   
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js')
-          .then(reg => console.log('SW registered:', reg.scope))
-          .catch(err => console.log('SW registration failed:', err));
+        navigator.serviceWorker.register('./sw.js')
+          .then(reg => console.log('✓ SW registered:', reg.scope))
+          .catch(err => console.error('✗ SW registration failed:', err));
       });
     }
   </script>
@@ -54,11 +54,17 @@
       justify-content: space-between;
       align-items: center;
       z-index: 100;
+      position: relative;
     }
     
     .header h1 {
       font-size: 1.2rem;
       font-weight: 700;
+    }
+    
+    .header-buttons {
+      display: flex;
+      gap: 8px;
     }
     
     .btn {
@@ -79,6 +85,11 @@
     .btn-danger {
       background: #ff4444;
       color: #fff;
+    }
+    
+    .btn-small {
+      padding: 6px 12px;
+      font-size: 0.8rem;
     }
     
     .camera-container {
@@ -291,11 +302,12 @@
       left: 50%;
       transform: translate(-50%, -50%);
       text-align: center;
-      background: rgba(0, 0, 0, 0.8);
+      background: rgba(0, 0, 0, 0.9);
       padding: 30px;
       border-radius: 20px;
-      max-width: 80%;
+      max-width: 85%;
       z-index: 50;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
     }
     
     .instructions h2 {
@@ -313,8 +325,55 @@
       line-height: 1.5;
     }
     
+    .pwa-install-banner {
+      background: rgba(255, 200, 0, 0.95);
+      color: #000;
+      padding: 16px;
+      text-align: center;
+      font-weight: 600;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 200;
+      display: none;
+    }
+    
+    .pwa-install-banner.show {
+      display: block;
+    }
+    
+    .pwa-install-banner button {
+      margin-top: 10px;
+      padding: 10px 20px;
+      background: #000;
+      color: #fff;
+      border: none;
+      border-radius: 20px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    
     #processingCanvas {
       display: none;
+    }
+    
+    .debug-info {
+      position: fixed;
+      top: 80px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 0.7rem;
+      font-family: monospace;
+      z-index: 150;
+      max-width: 200px;
+      display: none;
+    }
+    
+    .debug-info.show {
+      display: block;
     }
   </style>
 </head>
@@ -326,11 +385,20 @@
     <div class="spinner"></div>
   </div>
 
+  <div class="pwa-install-banner" id="installBanner">
+    📱 Install CHILLER app for better experience!
+    <button id="installBtn">Install Now</button>
+    <button onclick="document.getElementById('installBanner').style.display='none'" style="margin-left: 10px; background: #666;">Later</button>
+  </div>
+
   <div class="app-container">
     <div class="header">
       <h1>❄️ CHILLER</h1>
-      <button class="btn btn-primary" id="startBtn">Start</button>
-      <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
+      <div class="header-buttons">
+        <button class="btn btn-small btn-primary" id="debugBtn" onclick="toggleDebug()">Debug</button>
+        <button class="btn btn-primary" id="startBtn">Start</button>
+        <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
+      </div>
     </div>
 
     <div class="camera-container">
@@ -351,14 +419,22 @@
         <h2>📱 How to Use</h2>
         <ol>
           <li>Tap <strong>Start</strong> to begin</li>
-          <li>Allow camera access</li>
+          <li>Allow camera access when prompted</li>
           <li>Point camera at your <strong>inner forearm</strong></li>
-          <li>Keep arm in the <strong>white box</strong></li>
-          <li>Stay still for <strong>10 seconds</strong> (baseline)</li>
+          <li>Keep arm centered in the <strong>white box</strong></li>
+          <li>Stay still for <strong>10 seconds</strong> (baseline calibration)</li>
           <li>Watch for <strong>green alerts</strong> when goosebumps detected!</li>
         </ol>
         <button class="btn btn-primary" onclick="document.getElementById('instructions').style.display='none'">Got it!</button>
       </div>
+    </div>
+
+    <div class="debug-info" id="debugInfo">
+      Resolution: <span id="debugRes">--</span><br>
+      FPS: <span id="debugFps">--</span><br>
+      Baseline: <span id="debugBaseline">--</span><br>
+      Power: <span id="debugPower">--</span><br>
+      PWA: <span id="debugPwa">--</span>
     </div>
 
     <div class="graph-panel" id="graphPanel">
@@ -386,7 +462,7 @@
 
   <script>
     // ============================================
-    // CHILLER Mobile - FFT-Based Detection
+    // CHILLER Mobile - High Quality Camera + FFT Detection
     // ============================================
     
     let video, canvas, ctx;
@@ -399,35 +475,59 @@
     let frameCount = 0;
     let intensityHistory = [];
     let graphCtx;
+    let deferredPrompt;
+    let lastFrameTime = 0;
+    let fps = 0;
     
-    // Constants matching Flask implementation
+    // Constants matching Flask
     const BASELINE_FRAMES = 10;
     const DETECTION_THRESHOLD = 30.0;
     const ROI_WIDTH = 160;
     const ROI_HEIGHT = 120;
     const MAX_HISTORY = 60;
     const CLAHE_CLIP = 2.0;
-    
-    // Frequency range for goosebumps (in cycles per mm)
     const FREQ_MIN_MM = 0.23;
     const FREQ_MAX_MM = 0.75;
     const PIXEL_SIZE_MM = 0.25;
     
     // ============================================
-    // FFT Implementation (Simple 1D)
+    // PWA Install Handler
+    // ============================================
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('installBanner').classList.add('show');
+      document.getElementById('debugPwa').textContent = 'Ready';
+    });
+    
+    document.getElementById('installBtn').addEventListener('click', async () => {
+      if (!deferredPrompt) {
+        alert('Install option not available. Try:\n1. Chrome menu → "Install app"\n2. Or "Add to Home Screen"');
+        return;
+      }
+      
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('Install outcome:', outcome);
+      deferredPrompt = null;
+      document.getElementById('installBanner').classList.remove('show');
+    });
+    
+    window.addEventListener('appinstalled', () => {
+      console.log('✓ CHILLER installed!');
+      document.getElementById('debugPwa').textContent = 'Installed';
+    });
+    
+    // ============================================
+    // FFT Implementation
     // ============================================
     
     function fft(real, imag) {
       const n = real.length;
       if (n <= 1) return;
+      if (n % 2 !== 0) return;
       
-      // Cooley-Tukey FFT
-      if (n % 2 !== 0) {
-        console.error('FFT size must be power of 2');
-        return;
-      }
-      
-      // Divide
       const evenReal = [], evenImag = [];
       const oddReal = [], oddImag = [];
       
@@ -438,11 +538,9 @@
         oddImag[i] = imag[2 * i + 1];
       }
       
-      // Conquer
       fft(evenReal, evenImag);
       fft(oddReal, oddImag);
       
-      // Combine
       for (let k = 0; k < n / 2; k++) {
         const angle = -2 * Math.PI * k / n;
         const cosA = Math.cos(angle);
@@ -459,11 +557,10 @@
     }
     
     // ============================================
-    // CHILLER Algorithm (FFT-based)
+    // CHILLER Algorithm
     // ============================================
     
     function calculateGoosebumpPower(grayData, width, height) {
-      // 1. Normalize the image
       let sum = 0, sumSq = 0;
       const n = grayData.length;
       
@@ -476,17 +573,13 @@
       const variance = (sumSq / n) - (mean * mean);
       const std = Math.sqrt(variance);
       
-      if (std < 1.0) {
-        return 0.0; // Too low contrast
-      }
+      if (std < 1.0) return 0.0;
       
-      // Normalize
       const normalized = new Float32Array(n);
       for (let i = 0; i < n; i++) {
         normalized[i] = (grayData[i] - mean) / std;
       }
       
-      // 2. Apply FFT to each row and accumulate power spectrum
       const powerSpectrum = new Float32Array(width);
       powerSpectrum.fill(0);
       
@@ -494,28 +587,23 @@
         const rowReal = new Float32Array(width);
         const rowImag = new Float32Array(width);
         
-        // Extract row
         for (let x = 0; x < width; x++) {
           rowReal[x] = normalized[y * width + x];
           rowImag[x] = 0;
         }
         
-        // Apply FFT
         fft(rowReal, rowImag);
         
-        // Accumulate power
         for (let x = 0; x < width; x++) {
           const power = rowReal[x] * rowReal[x] + rowImag[x] * rowImag[x];
           powerSpectrum[x] += power;
         }
       }
       
-      // Average across rows
       for (let x = 0; x < width; x++) {
         powerSpectrum[x] /= height;
       }
       
-      // 3. Extract goosebump frequency band
       const nyquistFreq = 0.5;
       const freqMin = FREQ_MIN_MM * PIXEL_SIZE_MM;
       const freqMax = FREQ_MAX_MM * PIXEL_SIZE_MM;
@@ -538,16 +626,13 @@
     // ============================================
     
     function applyCLAHE(grayData, width, height) {
-      // Simplified CLAHE - histogram equalization with clipping
       const tileSize = 8;
       const tilesX = Math.floor(width / tileSize);
       const tilesY = Math.floor(height / tileSize);
-      
       const enhanced = new Uint8Array(grayData.length);
       
       for (let ty = 0; ty < tilesY; ty++) {
         for (let tx = 0; tx < tilesX; tx++) {
-          // Build histogram for tile
           const hist = new Array(256).fill(0);
           
           for (let y = 0; y < tileSize; y++) {
@@ -561,7 +646,6 @@
             }
           }
           
-          // Clip histogram
           const clipLimit = (tileSize * tileSize * CLAHE_CLIP) / 256;
           let excess = 0;
           for (let i = 0; i < 256; i++) {
@@ -575,20 +659,17 @@
             hist[i] += redistribute;
           }
           
-          // Create CDF
           const cdf = new Array(256);
           cdf[0] = hist[0];
           for (let i = 1; i < 256; i++) {
             cdf[i] = cdf[i - 1] + hist[i];
           }
           
-          // Normalize CDF
           const total = cdf[255];
           for (let i = 0; i < 256; i++) {
             cdf[i] = (cdf[i] / total) * 255;
           }
           
-          // Apply equalization to tile
           for (let y = 0; y < tileSize; y++) {
             for (let x = 0; x < tileSize; x++) {
               const px = tx * tileSize + x;
@@ -625,21 +706,31 @@
       
       document.getElementById('startBtn').addEventListener('click', startCamera);
       document.getElementById('stopBtn').addEventListener('click', stopCamera);
+      
+      // Check if already installed
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+        document.getElementById('debugPwa').textContent = 'Running';
+      }
     });
     
     // ============================================
-    // Camera Control
+    // HIGH QUALITY Camera Setup
     // ============================================
     
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        // Request HIGHEST possible quality
+        const constraints = {
           video: {
             facingMode: 'environment',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 },
+            frameRate: { ideal: 30, min: 24 },
+            aspectRatio: { ideal: 16/9 }
           }
-        });
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
         video.srcObject = stream;
         isRunning = true;
@@ -649,13 +740,21 @@
         document.getElementById('instructions').style.display = 'none';
         
         video.onloadedmetadata = () => {
+          const track = stream.getVideoTracks()[0];
+          const settings = track.getSettings();
+          
+          console.log('Camera Settings:', settings);
+          document.getElementById('debugRes').textContent = 
+            `${settings.width}x${settings.height}`;
+          
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
+          
           processFrames();
         };
         
       } catch (error) {
-        alert('Camera access denied. Please enable camera permissions in your browser settings.');
+        alert('Camera access denied. Please:\n1. Enable camera in browser settings\n2. Refresh the page\n3. Grant camera permission');
         console.error('Camera error:', error);
       }
     }
@@ -690,15 +789,20 @@
       
       frameCount++;
       
-      // Draw video frame
+      // Calculate FPS
+      const now = performance.now();
+      if (lastFrameTime) {
+        fps = 1000 / (now - lastFrameTime);
+        document.getElementById('debugFps').textContent = fps.toFixed(1);
+      }
+      lastFrameTime = now;
+      
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      // Extract ROI (center of frame)
       const roiX = Math.floor((canvas.width - ROI_WIDTH) / 2);
       const roiY = Math.floor((canvas.height - ROI_HEIGHT) / 2);
       const imageData = ctx.getImageData(roiX, roiY, ROI_WIDTH, ROI_HEIGHT);
       
-      // Convert to grayscale
       const grayData = new Uint8Array(ROI_WIDTH * ROI_HEIGHT);
       for (let i = 0; i < grayData.length; i++) {
         const r = imageData.data[i * 4];
@@ -707,39 +811,35 @@
         grayData[i] = Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
       }
       
-      // Apply CLAHE enhancement
       const enhanced = applyCLAHE(grayData, ROI_WIDTH, ROI_HEIGHT);
-      
-      // Calculate goosebump power using FFT
       const power = calculateGoosebumpPower(enhanced, ROI_WIDTH, ROI_HEIGHT);
       
-      // Baseline collection
+      document.getElementById('debugPower').textContent = power.toFixed(2);
+      
       if (!baselineEstablished) {
         baselineFrames.push(power);
         
         if (baselineFrames.length >= BASELINE_FRAMES) {
           baselinePower = baselineFrames.reduce((a, b) => a + b, 0) / baselineFrames.length;
           baselineEstablished = true;
-          console.log('✓ Baseline established:', baselinePower);
+          console.log('✓ Baseline:', baselinePower);
+          document.getElementById('debugBaseline').textContent = baselinePower.toFixed(2);
         }
         
         updateUI('baseline', 0, power);
       } else {
-        // Calculate intensity
         if (baselinePower > 0) {
           currentIntensity = ((power - baselinePower) / baselinePower) * 100;
         } else {
           currentIntensity = 0;
         }
         
-        // Detection
         const detect = currentIntensity >= DETECTION_THRESHOLD;
         if (detect) {
           detectionCount++;
           vibrate();
         }
         
-        // Update history
         intensityHistory.push(currentIntensity);
         if (intensityHistory.length > MAX_HISTORY) {
           intensityHistory.shift();
@@ -749,7 +849,6 @@
         drawGraph();
       }
       
-      // Continue processing
       requestAnimationFrame(processFrames);
     }
     
@@ -794,7 +893,6 @@
       
       if (intensityHistory.length < 2) return;
       
-      // Threshold line
       const thresholdY = h - (DETECTION_THRESHOLD / 100) * h;
       ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
       ctx.lineWidth = 2;
@@ -805,7 +903,6 @@
       ctx.stroke();
       ctx.setLineDash([]);
       
-      // Intensity line
       ctx.strokeStyle = '#00ff00';
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -835,6 +932,11 @@
     function toggleGraphPanel() {
       const panel = document.getElementById('graphPanel');
       panel.classList.toggle('show');
+    }
+    
+    function toggleDebug() {
+      const debug = document.getElementById('debugInfo');
+      debug.classList.toggle('show');
     }
   </script>
 </body>

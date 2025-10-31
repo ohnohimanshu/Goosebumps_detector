@@ -1,47 +1,63 @@
-const CACHE_NAME = 'chiller-v1';
+const CACHE_NAME = 'chiller-v3';
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png'
+  './',
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
-// Install service worker
 self.addEventListener('install', (event) => {
+  console.log('[SW] Installing...');
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(ASSETS))
+      .then(cache => {
+        console.log('[SW] Caching assets');
+        return cache.addAll(ASSETS);
+      })
+      .catch(err => console.error('[SW] Cache failed:', err))
   );
+  self.skipWaiting();
 });
 
-// Activate and clean old caches
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Activating...');
   event.waitUntil(
     caches.keys().then(keys => {
       return Promise.all(
         keys.filter(key => key !== CACHE_NAME)
-           .map(key => caches.delete(key))
+           .map(key => {
+             console.log('[SW] Deleting old cache:', key);
+             return caches.delete(key);
+           })
       );
     })
   );
+  self.clients.claim();
 });
 
-// Fetch strategy: Cache first, then network
 self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request)
       .then(cached => {
-        return cached || fetch(event.request)
+        if (cached) {
+          return cached;
+        }
+        return fetch(event.request)
           .then(response => {
-            const cache = caches.open(CACHE_NAME);
-            cache.then(cache => cache.put(event.request, response.clone()));
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
+            }
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME)
+              .then(cache => {
+                cache.put(event.request, responseToCache);
+              });
             return response;
           });
       })
       .catch(() => {
-        // Return offline fallback if no cache or network
-        return caches.match('/');
+        return caches.match('./index.html');
       })
   );
 });
