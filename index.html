@@ -103,6 +103,8 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
     }
     
     .camera-overlay {
@@ -395,6 +397,7 @@
     <div class="header">
       <h1>❄️ CHILLER</h1>
       <div class="header-buttons">
+        <button class="btn btn-small btn-primary" id="switchCameraBtn" style="display:none;" onclick="switchCamera()">📷</button>
         <button class="btn btn-small btn-primary" id="debugBtn" onclick="toggleDebug()">Debug</button>
         <button class="btn btn-primary" id="startBtn">Start</button>
         <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
@@ -697,7 +700,11 @@
       
       video = document.getElementById('videoElement');
       canvas = document.getElementById('processingCanvas');
-      ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx = canvas.getContext('2d', { 
+        willReadFrequently: true,
+        alpha: false,
+        desynchronized: true
+      });
       
       const graphCanvas = document.getElementById('graphCanvas');
       graphCtx = graphCanvas.getContext('2d');
@@ -719,18 +726,51 @@
     
     async function startCamera() {
       try {
-        // Request HIGHEST possible quality
+        // Get available cameras first
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        
+        console.log('Available cameras:', videoDevices);
+        
+        // Find the best rear camera (usually the last one has highest quality)
+        let rearCamera = videoDevices.find(device => 
+          device.label.toLowerCase().includes('back') || 
+          device.label.toLowerCase().includes('rear')
+        );
+        
+        // If not found, use the last camera (usually highest quality)
+        if (!rearCamera && videoDevices.length > 0) {
+          rearCamera = videoDevices[videoDevices.length - 1];
+        }
+        
+        // Request MAXIMUM quality with specific device
         const constraints = {
           video: {
-            facingMode: 'environment',
-            width: { ideal: 1920, min: 1280 },
-            height: { ideal: 1080, min: 720 },
-            frameRate: { ideal: 30, min: 24 },
-            aspectRatio: { ideal: 16/9 }
+            deviceId: rearCamera ? { exact: rearCamera.deviceId } : undefined,
+            facingMode: rearCamera ? undefined : 'environment',
+            width: { ideal: 3840, min: 1920 },  // Try 4K first
+            height: { ideal: 2160, min: 1080 },
+            frameRate: { ideal: 60, min: 30 },
+            aspectRatio: { ideal: 16/9 },
+            focusMode: { ideal: 'continuous' },
+            exposureMode: { ideal: 'continuous' },
+            whiteBalanceMode: { ideal: 'continuous' },
+            zoom: { ideal: 1.0 }
           }
         };
         
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log('Requesting camera with constraints:', constraints);
+        
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+          console.log('4K failed, trying 1080p...', err);
+          // Fallback to 1080p if 4K fails
+          constraints.video.width = { ideal: 1920, min: 1280 };
+          constraints.video.height = { ideal: 1080, min: 720 };
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        }
         
         video.srcObject = stream;
         isRunning = true;
@@ -739,22 +779,60 @@
         document.getElementById('stopBtn').style.display = 'block';
         document.getElementById('instructions').style.display = 'none';
         
-        video.onloadedmetadata = () => {
+        video.onloadedmetadata = async () => {
           const track = stream.getVideoTracks()[0];
           const settings = track.getSettings();
+          const capabilities = track.getCapabilities();
           
           console.log('Camera Settings:', settings);
-          document.getElementById('debugRes').textContent = 
-            `${settings.width}x${settings.height}`;
+          console.log('Camera Capabilities:', capabilities);
           
+          // Try to apply advanced settings if supported
+          try {
+            const advancedConstraints = {};
+            
+            // Max out resolution if possible
+            if (capabilities.width && capabilities.height) {
+              advancedConstraints.width = capabilities.width.max || settings.width;
+              advancedConstraints.height = capabilities.height.max || settings.height;
+            }
+            
+            // Enable continuous autofocus
+            if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+              advancedConstraints.focusMode = 'continuous';
+            }
+            
+            // Optimize exposure
+            if (capabilities.exposureMode && capabilities.exposureMode.includes('continuous')) {
+              advancedConstraints.exposureMode = 'continuous';
+            }
+            
+            // Apply if we have any advanced constraints
+            if (Object.keys(advancedConstraints).length > 0) {
+              await track.applyConstraints({ advanced: [advancedConstraints] });
+              console.log('Applied advanced constraints:', advancedConstraints);
+            }
+            
+          } catch (err) {
+            console.log('Advanced constraints not supported:', err);
+          }
+          
+          // Update debug info
+          document.getElementById('debugRes').textContent = 
+            `${settings.width}x${settings.height}@${settings.frameRate || 30}fps`;
+          
+          // Set canvas to match video resolution exactly
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
+          
+          console.log(`Canvas size: ${canvas.width}x${canvas.height}`);
+          console.log(`Video size: ${video.videoWidth}x${video.videoHeight}`);
           
           processFrames();
         };
         
       } catch (error) {
-        alert('Camera access denied. Please:\n1. Enable camera in browser settings\n2. Refresh the page\n3. Grant camera permission');
+        alert('Camera access denied. Please:\n1. Enable camera in browser settings\n2. Grant all camera permissions\n3. Refresh and try again\n\nError: ' + error.message);
         console.error('Camera error:', error);
       }
     }
@@ -797,6 +875,8 @@
       }
       lastFrameTime = now;
       
+      // Draw with high quality settings
+      ctx.imageSmoothingEnabled = false;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
       const roiX = Math.floor((canvas.width - ROI_WIDTH) / 2);
