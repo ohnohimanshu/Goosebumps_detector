@@ -7,6 +7,12 @@
   <meta name="description" content="CHILLER - Real-time Goosebump Detection">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- Security and Permissions -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self';">
+  <meta name="permissions-policy" content="camera=*, microphone=()">
+  <!-- Mobile Web App -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="application-name" content="CHILLER">
   <title>CHILLER Mobile</title>
   
   <link rel="manifest" href="./manifest.json">
@@ -463,6 +469,19 @@
     </div>
   </div>
 
+  <a href="javascript:void(0)" onclick="testCamera()" style="color: white; text-decoration: underline;">Test Camera Access</a>
+  <script>
+  async function testCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(track => track.stop());
+      alert('Camera access successful! Now click Start.');
+    } catch (error) {
+      alert('Camera error: ' + error.message);
+    }
+  }
+  </script>
+
   <script>
     // ============================================
     // CHILLER Mobile - High Quality Camera + FFT Detection
@@ -740,12 +759,19 @@
           throw new Error('Camera API not supported in this browser');
         }
 
-        // Start with basic mobile-friendly constraints
+        // For mobile, first enumerate devices to trigger the permission prompt
+        try {
+          await navigator.mediaDevices.enumerateDevices();
+        } catch (enumError) {
+          console.log('Device enumeration failed:', enumError);
+        }
+
+        // Mobile-friendly constraints - start with very basic
         const constraints = {
           video: {
-            facingMode: 'environment',
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 }
+            facingMode: { exact: 'environment' }, // Force rear camera
+            width: { ideal: 1280, min: 320 },
+            height: { ideal: 720, min: 240 }
           }
         };
 
