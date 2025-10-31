@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#667eea">
+  <meta name="description" content="CHILLER - Real-time Goosebump Detection">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>CHILLER Mobile</title>
+  
+  <!-- PWA Support -->
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  
+  <!-- Replace existing inline service worker with: -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(registration => {
+            console.log('ServiceWorker registered:', registration.scope);
+          })
+          .catch(error => {
+            console.log('ServiceWorker registration failed:', error);
+          });
+      });
+    }
+  </script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      overflow: hidden;
+      height: 100vh;
+      touch-action: manipulation;
+    }
+    
+    .app-container {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    
+    /* Header */
+    .header {
+      background: rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(10px);
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+    }
+    
+    .header h1 {
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+    
+    .btn {
+      padding: 8px 16px;
+      border-radius: 20px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: all 0.3s;
+    }
+    
+    .btn-primary {
+      background: #fff;
+      color: #667eea;
+    }
+    
+    .btn-danger {
+      background: #ff4444;
+      color: #fff;
+    }
+    
+    /* Camera View */
+    .camera-container {
+      flex: 1;
+      position: relative;
+      background: #000;
+      overflow: hidden;
+    }
+    
+    #videoElement {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    .camera-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+    }
+    
+    /* ROI Box */
+    .roi-box {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 200px;
+      height: 200px;
+      border: 3px solid rgba(255, 255, 255, 0.5);
+      border-radius: 10px;
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+    }
+    
+    .roi-box.detecting {
+      border-color: #00ff00;
+      box-shadow: 0 0 30px rgba(0, 255, 0, 0.6);
+      animation: pulse 1s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.05); }
+    }
+    
+    /* Status Banner */
+    .status-banner {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 12px 24px;
+      border-radius: 25px;
+      font-weight: 700;
+      font-size: 1rem;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      white-space: nowrap;
+    }
+    
+    .status-banner.baseline {
+      background: rgba(255, 0, 0, 0.8);
+      border-color: #ff0000;
+    }
+    
+    .status-banner.monitoring {
+      background: rgba(128, 128, 128, 0.8);
+      border-color: #888;
+    }
+    
+    .status-banner.detecting {
+      background: rgba(0, 255, 0, 0.8);
+      border-color: #00ff00;
+      animation: pulse 0.5s infinite;
+    }
+    
+    /* Intensity Display */
+    .intensity-display {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.9);
+      padding: 16px 32px;
+      border-radius: 30px;
+      font-size: 2rem;
+      font-weight: 900;
+      font-family: 'Courier New', monospace;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+    }
+    
+    /* Graph Panel */
+    .graph-panel {
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 16px;
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    
+    .graph-panel.show {
+      max-height: 250px;
+    }
+    
+    .graph-canvas {
+      width: 100%;
+      height: 200px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+    }
+    
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+    
+    .stat-item {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 8px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    
+    .stat-label {
+      font-size: 0.7rem;
+      opacity: 0.7;
+      text-transform: uppercase;
+    }
+    
+    .stat-value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+    
+    /* Toggle Button */
+    .toggle-graph {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      cursor: pointer;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+    
+    /* Splash Screen */
+    .splash-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: opacity 0.5s;
+    }
+    
+    .splash-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    
+    .splash-logo {
+      font-size: 4rem;
+      margin-bottom: 20px;
+    }
+    
+    .splash-title {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    
+    .splash-subtitle {
+      font-size: 1rem;
+      opacity: 0.8;
+      margin-bottom: 40px;
+    }
+    
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Instructions */
+    .instructions {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 30px;
+      border-radius: 20px;
+      max-width: 80%;
+    }
+    
+    .instructions h2 {
+      margin-bottom: 20px;
+    }
+    
+    .instructions ol {
+      text-align: left;
+      margin: 20px 0;
+      padding-left: 20px;
+    }
+    
+    .instructions li {
+      margin: 10px 0;
+      line-height: 1.5;
+    }
+    
+    /* Hidden Canvas for Processing */
+    #processingCanvas {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- Splash Screen -->
+  <div class="splash-screen" id="splashScreen">
+    <div class="splash-logo">❄️</div>
+    <div class="splash-title">CHILLER Mobile</div>
+    <div class="splash-subtitle">Real-time Goosebump Detection</div>
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Main App -->
+  <div class="app-container">
+    <!-- Header -->
+    <div class="header">
+      <h1>❄️ CHILLER</h1>
+      <button class="btn btn-primary" id="startBtn">Start</button>
+      <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
+    </div>
+
+    <!-- Camera View -->
+    <div class="camera-container">
+      <video id="videoElement" autoplay playsinline></video>
+      <canvas id="processingCanvas"></canvas>
+      
+      <div class="camera-overlay">
+        <div class="roi-box" id="roiBox"></div>
+        <div class="status-banner monitoring" id="statusBanner">
+          Initializing...
+        </div>
+        <div class="intensity-display" id="intensityDisplay">
+          0.0%
+        </div>
+      </div>
+
+      <!-- Instructions (shown initially) -->
+      <div class="instructions" id="instructions">
+        <h2>📱 How to Use</h2>
+        <ol>
+          <li>Tap <strong>Start</strong> to begin</li>
+          <li>Allow camera access</li>
+          <li>Point camera at your <strong>inner forearm</strong></li>
+          <li>Keep arm in the <strong>white box</strong></li>
+          <li>Stay still for <strong>10 seconds</strong> (baseline)</li>
+          <li>Watch for <strong>green alerts</strong> when goosebumps detected!</li>
+        </ol>
+        <button class="btn btn-primary" onclick="document.getElementById('instructions').style.display='none'">Got it!</button>
+      </div>
+    </div>
+
+    <!-- Graph Panel -->
+    <div class="graph-panel" id="graphPanel">
+      <canvas class="graph-canvas" id="graphCanvas"></canvas>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-label">Baseline</div>
+          <div class="stat-value" id="statBaseline">--</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Current</div>
+          <div class="stat-value" id="statCurrent">--</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Detections</div>
+          <div class="stat-value" id="statDetections">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toggle Graph Button -->
+    <div class="toggle-graph" id="toggleGraph" onclick="toggleGraphPanel()">
+      📊
+    </div>
+  </div>
+
+  <script>
+    // ============================================
+    // CHILLER Mobile PWA - Core Logic
+    // ============================================
+    
+    // State
+    let video, canvas, ctx;
+    let isRunning = false;
+    let baselineFrames = [];
+    let baselinePower = 0;
+    let baselineEstablished = false;
+    let currentIntensity = 0;
+    let detectionCount = 0;
+    let frameCount = 0;
+    let intensityHistory = [];
+    let graphCtx;
+    
+    // Constants (matching CHILLER research)
+    const BASELINE_FRAMES = 10;
+    const DETECTION_THRESHOLD = 30.0;
+    const ROI_SIZE = 160;
+    const MAX_HISTORY = 60;
+    
+    // Initialize
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        document.getElementById('splashScreen').classList.add('hidden');
+      }, 2000);
+      
+      video = document.getElementById('videoElement');
+      canvas = document.getElementById('processingCanvas');
+      ctx = canvas.getContext('2d', { willReadFrequently: true });
+      
+      const graphCanvas = document.getElementById('graphCanvas');
+      graphCtx = graphCanvas.getContext('2d');
+      graphCanvas.width = graphCanvas.offsetWidth;
+      graphCanvas.height = 200;
+      
+      document.getElementById('startBtn').addEventListener('click', startCamera);
+      document.getElementById('stopBtn').addEventListener('click', stopCamera);
+    });
+    
+    // Camera Access
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment', // Rear camera
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          }
+        });
+        
+        video.srcObject = stream;
+        isRunning = true;
+        
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('stopBtn').style.display = 'block';
+        document.getElementById('instructions').style.display = 'none';
+        
+        // Wait for video to load
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          processFrames();
+        };
+        
+      } catch (error) {
+        alert('Camera access denied. Please enable camera permissions.');
+        console.error('Camera error:', error);
+      }
+    }
+    
+    function stopCamera() {
+      isRunning = false;
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+      document.getElementById('startBtn').style.display = 'block';
+      document.getElementById('stopBtn').style.display = 'none';
+      resetState();
+    }
+    
+    function resetState() {
+      baselineFrames = [];
+      baselinePower = 0;
+      baselineEstablished = false;
+      currentIntensity = 0;
+      frameCount = 0;
+      intensityHistory = [];
+      updateUI();
+    }
+    
+    // Main Processing Loop
+    function processFrames() {
+      if (!isRunning) return;
+      
+      frameCount++;
+      
+      // Draw video frame to canvas
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Extract ROI (center of frame)
+      const roiX = Math.floor((canvas.width - ROI_SIZE) / 2);
+      const roiY = Math.floor((canvas.height - ROI_SIZE) / 2);
+      const imageData = ctx.getImageData(roiX, roiY, ROI_SIZE, ROI_SIZE);
+      
+      // Convert to grayscale and analyze
+      const grayData = convertToGrayscale(imageData);
+      const power = calculateGoosebumpPower(grayData);
+      
+      // Baseline collection
+      if (!baselineEstablished) {
+        baselineFrames.push(power);
+        
+        if (baselineFrames.length >= BASELINE_FRAMES) {
+          baselinePower = baselineFrames.reduce((a, b) => a + b, 0) / baselineFrames.length;
+          baselineEstablished = true;
+          console.log('Baseline established:', baselinePower);
+        }
+        
+        updateUI('baseline', 0, power);
+      } else {
+        // Calculate intensity
+        currentIntensity = ((power - baselinePower) / baselinePower) * 100;
+        
+        // Detection
+        const detect = currentIntensity >= DETECTION_THRESHOLD;
+        if (detect) {
+          detectionCount++;
+          vibrate();
+        }
+        
+        // Update history
+        intensityHistory.push(currentIntensity);
+        if (intensityHistory.length > MAX_HISTORY) {
+          intensityHistory.shift();
+        }
+        
+        updateUI(detect ? 'detecting' : 'monitoring', currentIntensity, power);
+        drawGraph();
+      }
+      
+      // Continue processing (approximately 30 FPS)
+      requestAnimationFrame(processFrames);
+    }
+    
+    // Image Processing
+    function convertToGrayscale(imageData) {
+      const data = imageData.data;
+      const gray = new Uint8Array(ROI_SIZE * ROI_SIZE);
+      
+      for (let i = 0; i < data.length; i += 4) {
+        // Weighted grayscale conversion
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        gray[i / 4] = Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
+      }
+      
+      return gray;
+    }
+    
+    // Simplified Goosebump Power Calculation
+    // (Full FFT would require additional library; using texture variance as proxy)
+    function calculateGoosebumpPower(grayData) {
+      // Calculate variance (proxy for texture intensity)
+      let sum = 0;
+      let sumSq = 0;
+      const n = grayData.length;
+      
+      for (let i = 0; i < n; i++) {
+        sum += grayData[i];
+        sumSq += grayData[i] * grayData[i];
+      }
+      
+      const mean = sum / n;
+      const variance = (sumSq / n) - (mean * mean);
+      
+      // Apply edge detection boost (goosebumps create edges)
+      let edgeScore = 0;
+      const w = ROI_SIZE;
+      
+      for (let y = 1; y < w - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const idx = y * w + x;
+          const gx = -grayData[idx - 1] + grayData[idx + 1];
+          const gy = -grayData[idx - w] + grayData[idx + w];
+          edgeScore += Math.sqrt(gx * gx + gy * gy);
+        }
+      }
+      
+      // Combined score
+      return variance * 0.7 + (edgeScore / n) * 0.3;
+    }
+    
+    // UI Updates
+    function updateUI(status, intensity, power) {
+      const statusBanner = document.getElementById('statusBanner');
+      const intensityDisplay = document.getElementById('intensityDisplay');
+      const roiBox = document.getElementById('roiBox');
+      
+      // Status
+      statusBanner.className = 'status-banner ' + status;
+      
+      if (status === 'baseline') {
+        statusBanner.textContent = `🔴 Baseline: ${baselineFrames.length}/${BASELINE_FRAMES}`;
+      } else if (status === 'detecting') {
+        statusBanner.textContent = `🎉 GOOSEBUMPS DETECTED!`;
+        roiBox.classList.add('detecting');
+      } else {
+        statusBanner.textContent = `👁️ Monitoring...`;
+        roiBox.classList.remove('detecting');
+      }
+      
+      // Intensity
+      intensityDisplay.textContent = intensity.toFixed(1) + '%';
+      intensityDisplay.style.color = intensity > DETECTION_THRESHOLD ? '#00ff00' : '#fff';
+      
+      // Stats
+      document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
+      document.getElementById('statCurrent').textContent = power.toFixed(2);
+      document.getElementById('statDetections').textContent = detectionCount;
+    }
+    
+    // Graph Drawing
+    function drawGraph() {
+      const canvas = document.getElementById('graphCanvas');
+      const ctx = graphCtx;
+      const w = canvas.width;
+      const h = canvas.height;
+      
+      // Clear
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.fillRect(0, 0, w, h);
+      
+      if (intensityHistory.length < 2) return;
+      
+      // Draw threshold line
+      const thresholdY = h - (DETECTION_THRESHOLD / 100) * h;
+      ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(0, thresholdY);
+      ctx.lineTo(w, thresholdY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Draw intensity line
+      ctx.strokeStyle = '#00ff00';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      
+      const step = w / MAX_HISTORY;
+      
+      intensityHistory.forEach((intensity, i) => {
+        const x = i * step;
+        const y = h - Math.max(0, Math.min(100, intensity)) / 100 * h;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      
+      ctx.stroke();
+    }
+    
+    // Haptic Feedback
+    function vibrate() {
+      if ('vibrate' in navigator) {
+        navigator.vibrate([200, 100, 200]);
+      }
+    }
+    
+    // Toggle Graph
+    function toggleGraphPanel() {
+      const panel = document.getElementById('graphPanel');
+      panel.classList.toggle('show');
+    }
+  </script>
+</body>
+</html>
