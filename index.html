@@ -378,8 +378,6 @@
   </style>
 </head>
 <body>
-  <canvas id="c192" width="192" height="192"></canvas>
-<canvas id="c512" width="512" height="512"></canvas>
   <div class="splash-screen" id="splashScreen">
     <div class="splash-logo">❄️</div>
     <div class="splash-title">CHILLER Mobile</div>
@@ -463,46 +461,6 @@
   </div>
 
   <script>
-
-
-
-
-function createIcon(id, size) {
-  const canvas = document.getElementById(id);
-  const ctx = canvas.getContext('2d');
-  
-  // Gradient background
-  const grad = ctx.createLinearGradient(0, 0, size, size);
-  grad.addColorStop(0, '#667eea');
-  grad.addColorStop(1, '#764ba2');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  
-  // White circle
-  ctx.fillStyle = 'white';
-  ctx.beginPath();
-  ctx.arc(size/2, size/2, size/3, 0, Math.PI * 2);
-  ctx.fill();
-  
-  // Snowflake emoji
-  ctx.fillStyle = '#667eea';
-  ctx.font = `${size/2}px Arial`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('❄️', size/2, size/2);
-  
-  // Download
-  canvas.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `icon-${size}.png`;
-    a.click();
-  });
-}
-
-createIcon('c192', 192);
-createIcon('c512', 512);
     // ============================================
     // CHILLER Mobile - High Quality Camera + FFT Detection
     // ============================================
