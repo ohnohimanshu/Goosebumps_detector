@@ -9,21 +9,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>CHILLER Mobile</title>
   
-  <!-- PWA Support -->
-  <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   
-  <!-- Replace existing inline service worker with: -->
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then(registration => {
-            console.log('ServiceWorker registered:', registration.scope);
-          })
-          .catch(error => {
-            console.log('ServiceWorker registration failed:', error);
-          });
+        navigator.serviceWorker.register('sw.js')
+          .then(reg => console.log('SW registered:', reg.scope))
+          .catch(err => console.log('SW registration failed:', err));
       });
     }
   </script>
@@ -52,7 +46,6 @@
       position: relative;
     }
     
-    /* Header */
     .header {
       background: rgba(0, 0, 0, 0.3);
       backdrop-filter: blur(10px);
@@ -88,7 +81,6 @@
       color: #fff;
     }
     
-    /* Camera View */
     .camera-container {
       flex: 1;
       position: relative;
@@ -111,14 +103,13 @@
       pointer-events: none;
     }
     
-    /* ROI Box */
     .roi-box {
       position: absolute;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 200px;
-      height: 200px;
+      width: 160px;
+      height: 120px;
       border: 3px solid rgba(255, 255, 255, 0.5);
       border-radius: 10px;
       box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
@@ -135,7 +126,6 @@
       50% { transform: translate(-50%, -50%) scale(1.05); }
     }
     
-    /* Status Banner */
     .status-banner {
       position: absolute;
       top: 20px;
@@ -167,7 +157,6 @@
       animation: pulse 0.5s infinite;
     }
     
-    /* Intensity Display */
     .intensity-display {
       position: absolute;
       bottom: 20px;
@@ -182,7 +171,6 @@
       border: 3px solid rgba(255, 255, 255, 0.3);
     }
     
-    /* Graph Panel */
     .graph-panel {
       background: rgba(0, 0, 0, 0.8);
       backdrop-filter: blur(10px);
@@ -203,7 +191,6 @@
       border-radius: 10px;
     }
     
-    /* Stats Grid */
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -230,7 +217,6 @@
       margin-top: 4px;
     }
     
-    /* Toggle Button */
     .toggle-graph {
       position: fixed;
       bottom: 20px;
@@ -249,7 +235,6 @@
       backdrop-filter: blur(10px);
     }
     
-    /* Splash Screen */
     .splash-screen {
       position: fixed;
       top: 0;
@@ -300,7 +285,6 @@
       to { transform: rotate(360deg); }
     }
     
-    /* Instructions */
     .instructions {
       position: absolute;
       top: 50%;
@@ -311,6 +295,7 @@
       padding: 30px;
       border-radius: 20px;
       max-width: 80%;
+      z-index: 50;
     }
     
     .instructions h2 {
@@ -328,14 +313,12 @@
       line-height: 1.5;
     }
     
-    /* Hidden Canvas for Processing */
     #processingCanvas {
       display: none;
     }
   </style>
 </head>
 <body>
-  <!-- Splash Screen -->
   <div class="splash-screen" id="splashScreen">
     <div class="splash-logo">❄️</div>
     <div class="splash-title">CHILLER Mobile</div>
@@ -343,16 +326,13 @@
     <div class="spinner"></div>
   </div>
 
-  <!-- Main App -->
   <div class="app-container">
-    <!-- Header -->
     <div class="header">
       <h1>❄️ CHILLER</h1>
       <button class="btn btn-primary" id="startBtn">Start</button>
       <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
     </div>
 
-    <!-- Camera View -->
     <div class="camera-container">
       <video id="videoElement" autoplay playsinline></video>
       <canvas id="processingCanvas"></canvas>
@@ -367,7 +347,6 @@
         </div>
       </div>
 
-      <!-- Instructions (shown initially) -->
       <div class="instructions" id="instructions">
         <h2>📱 How to Use</h2>
         <ol>
@@ -382,7 +361,6 @@
       </div>
     </div>
 
-    <!-- Graph Panel -->
     <div class="graph-panel" id="graphPanel">
       <canvas class="graph-canvas" id="graphCanvas"></canvas>
       <div class="stats-grid">
@@ -401,7 +379,6 @@
       </div>
     </div>
 
-    <!-- Toggle Graph Button -->
     <div class="toggle-graph" id="toggleGraph" onclick="toggleGraphPanel()">
       📊
     </div>
@@ -409,10 +386,9 @@
 
   <script>
     // ============================================
-    // CHILLER Mobile PWA - Core Logic
+    // CHILLER Mobile - FFT-Based Detection
     // ============================================
     
-    // State
     let video, canvas, ctx;
     let isRunning = false;
     let baselineFrames = [];
@@ -424,13 +400,215 @@
     let intensityHistory = [];
     let graphCtx;
     
-    // Constants (matching CHILLER research)
+    // Constants matching Flask implementation
     const BASELINE_FRAMES = 10;
     const DETECTION_THRESHOLD = 30.0;
-    const ROI_SIZE = 160;
+    const ROI_WIDTH = 160;
+    const ROI_HEIGHT = 120;
     const MAX_HISTORY = 60;
+    const CLAHE_CLIP = 2.0;
     
+    // Frequency range for goosebumps (in cycles per mm)
+    const FREQ_MIN_MM = 0.23;
+    const FREQ_MAX_MM = 0.75;
+    const PIXEL_SIZE_MM = 0.25;
+    
+    // ============================================
+    // FFT Implementation (Simple 1D)
+    // ============================================
+    
+    function fft(real, imag) {
+      const n = real.length;
+      if (n <= 1) return;
+      
+      // Cooley-Tukey FFT
+      if (n % 2 !== 0) {
+        console.error('FFT size must be power of 2');
+        return;
+      }
+      
+      // Divide
+      const evenReal = [], evenImag = [];
+      const oddReal = [], oddImag = [];
+      
+      for (let i = 0; i < n / 2; i++) {
+        evenReal[i] = real[2 * i];
+        evenImag[i] = imag[2 * i];
+        oddReal[i] = real[2 * i + 1];
+        oddImag[i] = imag[2 * i + 1];
+      }
+      
+      // Conquer
+      fft(evenReal, evenImag);
+      fft(oddReal, oddImag);
+      
+      // Combine
+      for (let k = 0; k < n / 2; k++) {
+        const angle = -2 * Math.PI * k / n;
+        const cosA = Math.cos(angle);
+        const sinA = Math.sin(angle);
+        
+        const tReal = cosA * oddReal[k] - sinA * oddImag[k];
+        const tImag = cosA * oddImag[k] + sinA * oddReal[k];
+        
+        real[k] = evenReal[k] + tReal;
+        imag[k] = evenImag[k] + tImag;
+        real[k + n / 2] = evenReal[k] - tReal;
+        imag[k + n / 2] = evenImag[k] - tImag;
+      }
+    }
+    
+    // ============================================
+    // CHILLER Algorithm (FFT-based)
+    // ============================================
+    
+    function calculateGoosebumpPower(grayData, width, height) {
+      // 1. Normalize the image
+      let sum = 0, sumSq = 0;
+      const n = grayData.length;
+      
+      for (let i = 0; i < n; i++) {
+        sum += grayData[i];
+        sumSq += grayData[i] * grayData[i];
+      }
+      
+      const mean = sum / n;
+      const variance = (sumSq / n) - (mean * mean);
+      const std = Math.sqrt(variance);
+      
+      if (std < 1.0) {
+        return 0.0; // Too low contrast
+      }
+      
+      // Normalize
+      const normalized = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        normalized[i] = (grayData[i] - mean) / std;
+      }
+      
+      // 2. Apply FFT to each row and accumulate power spectrum
+      const powerSpectrum = new Float32Array(width);
+      powerSpectrum.fill(0);
+      
+      for (let y = 0; y < height; y++) {
+        const rowReal = new Float32Array(width);
+        const rowImag = new Float32Array(width);
+        
+        // Extract row
+        for (let x = 0; x < width; x++) {
+          rowReal[x] = normalized[y * width + x];
+          rowImag[x] = 0;
+        }
+        
+        // Apply FFT
+        fft(rowReal, rowImag);
+        
+        // Accumulate power
+        for (let x = 0; x < width; x++) {
+          const power = rowReal[x] * rowReal[x] + rowImag[x] * rowImag[x];
+          powerSpectrum[x] += power;
+        }
+      }
+      
+      // Average across rows
+      for (let x = 0; x < width; x++) {
+        powerSpectrum[x] /= height;
+      }
+      
+      // 3. Extract goosebump frequency band
+      const nyquistFreq = 0.5;
+      const freqMin = FREQ_MIN_MM * PIXEL_SIZE_MM;
+      const freqMax = FREQ_MAX_MM * PIXEL_SIZE_MM;
+      
+      const binMin = Math.floor(freqMin / nyquistFreq * width / 2);
+      const binMax = Math.ceil(freqMax / nyquistFreq * width / 2);
+      
+      let maxPower = 0;
+      for (let i = binMin; i < Math.min(binMax, width / 2); i++) {
+        if (powerSpectrum[i] > maxPower) {
+          maxPower = powerSpectrum[i];
+        }
+      }
+      
+      return maxPower;
+    }
+    
+    // ============================================
+    // CLAHE Enhancement
+    // ============================================
+    
+    function applyCLAHE(grayData, width, height) {
+      // Simplified CLAHE - histogram equalization with clipping
+      const tileSize = 8;
+      const tilesX = Math.floor(width / tileSize);
+      const tilesY = Math.floor(height / tileSize);
+      
+      const enhanced = new Uint8Array(grayData.length);
+      
+      for (let ty = 0; ty < tilesY; ty++) {
+        for (let tx = 0; tx < tilesX; tx++) {
+          // Build histogram for tile
+          const hist = new Array(256).fill(0);
+          
+          for (let y = 0; y < tileSize; y++) {
+            for (let x = 0; x < tileSize; x++) {
+              const px = tx * tileSize + x;
+              const py = ty * tileSize + y;
+              if (px < width && py < height) {
+                const idx = py * width + px;
+                hist[grayData[idx]]++;
+              }
+            }
+          }
+          
+          // Clip histogram
+          const clipLimit = (tileSize * tileSize * CLAHE_CLIP) / 256;
+          let excess = 0;
+          for (let i = 0; i < 256; i++) {
+            if (hist[i] > clipLimit) {
+              excess += hist[i] - clipLimit;
+              hist[i] = clipLimit;
+            }
+          }
+          const redistribute = excess / 256;
+          for (let i = 0; i < 256; i++) {
+            hist[i] += redistribute;
+          }
+          
+          // Create CDF
+          const cdf = new Array(256);
+          cdf[0] = hist[0];
+          for (let i = 1; i < 256; i++) {
+            cdf[i] = cdf[i - 1] + hist[i];
+          }
+          
+          // Normalize CDF
+          const total = cdf[255];
+          for (let i = 0; i < 256; i++) {
+            cdf[i] = (cdf[i] / total) * 255;
+          }
+          
+          // Apply equalization to tile
+          for (let y = 0; y < tileSize; y++) {
+            for (let x = 0; x < tileSize; x++) {
+              const px = tx * tileSize + x;
+              const py = ty * tileSize + y;
+              if (px < width && py < height) {
+                const idx = py * width + px;
+                enhanced[idx] = Math.round(cdf[grayData[idx]]);
+              }
+            }
+          }
+        }
+      }
+      
+      return enhanced;
+    }
+    
+    // ============================================
     // Initialize
+    // ============================================
+    
     window.addEventListener('load', () => {
       setTimeout(() => {
         document.getElementById('splashScreen').classList.add('hidden');
@@ -449,12 +627,15 @@
       document.getElementById('stopBtn').addEventListener('click', stopCamera);
     });
     
-    // Camera Access
+    // ============================================
+    // Camera Control
+    // ============================================
+    
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: 'environment', // Rear camera
+            facingMode: 'environment',
             width: { ideal: 640 },
             height: { ideal: 480 }
           }
@@ -467,7 +648,6 @@
         document.getElementById('stopBtn').style.display = 'block';
         document.getElementById('instructions').style.display = 'none';
         
-        // Wait for video to load
         video.onloadedmetadata = () => {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
@@ -475,7 +655,7 @@
         };
         
       } catch (error) {
-        alert('Camera access denied. Please enable camera permissions.');
+        alert('Camera access denied. Please enable camera permissions in your browser settings.');
         console.error('Camera error:', error);
       }
     }
@@ -496,27 +676,42 @@
       baselineEstablished = false;
       currentIntensity = 0;
       frameCount = 0;
+      detectionCount = 0;
       intensityHistory = [];
       updateUI();
     }
     
+    // ============================================
     // Main Processing Loop
+    // ============================================
+    
     function processFrames() {
       if (!isRunning) return;
       
       frameCount++;
       
-      // Draw video frame to canvas
+      // Draw video frame
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
       // Extract ROI (center of frame)
-      const roiX = Math.floor((canvas.width - ROI_SIZE) / 2);
-      const roiY = Math.floor((canvas.height - ROI_SIZE) / 2);
-      const imageData = ctx.getImageData(roiX, roiY, ROI_SIZE, ROI_SIZE);
+      const roiX = Math.floor((canvas.width - ROI_WIDTH) / 2);
+      const roiY = Math.floor((canvas.height - ROI_HEIGHT) / 2);
+      const imageData = ctx.getImageData(roiX, roiY, ROI_WIDTH, ROI_HEIGHT);
       
-      // Convert to grayscale and analyze
-      const grayData = convertToGrayscale(imageData);
-      const power = calculateGoosebumpPower(grayData);
+      // Convert to grayscale
+      const grayData = new Uint8Array(ROI_WIDTH * ROI_HEIGHT);
+      for (let i = 0; i < grayData.length; i++) {
+        const r = imageData.data[i * 4];
+        const g = imageData.data[i * 4 + 1];
+        const b = imageData.data[i * 4 + 2];
+        grayData[i] = Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
+      }
+      
+      // Apply CLAHE enhancement
+      const enhanced = applyCLAHE(grayData, ROI_WIDTH, ROI_HEIGHT);
+      
+      // Calculate goosebump power using FFT
+      const power = calculateGoosebumpPower(enhanced, ROI_WIDTH, ROI_HEIGHT);
       
       // Baseline collection
       if (!baselineEstablished) {
@@ -525,13 +720,17 @@
         if (baselineFrames.length >= BASELINE_FRAMES) {
           baselinePower = baselineFrames.reduce((a, b) => a + b, 0) / baselineFrames.length;
           baselineEstablished = true;
-          console.log('Baseline established:', baselinePower);
+          console.log('✓ Baseline established:', baselinePower);
         }
         
         updateUI('baseline', 0, power);
       } else {
         // Calculate intensity
-        currentIntensity = ((power - baselinePower) / baselinePower) * 100;
+        if (baselinePower > 0) {
+          currentIntensity = ((power - baselinePower) / baselinePower) * 100;
+        } else {
+          currentIntensity = 0;
+        }
         
         // Detection
         const detect = currentIntensity >= DETECTION_THRESHOLD;
@@ -550,70 +749,24 @@
         drawGraph();
       }
       
-      // Continue processing (approximately 30 FPS)
+      // Continue processing
       requestAnimationFrame(processFrames);
     }
     
-    // Image Processing
-    function convertToGrayscale(imageData) {
-      const data = imageData.data;
-      const gray = new Uint8Array(ROI_SIZE * ROI_SIZE);
-      
-      for (let i = 0; i < data.length; i += 4) {
-        // Weighted grayscale conversion
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        gray[i / 4] = Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
-      }
-      
-      return gray;
-    }
-    
-    // Simplified Goosebump Power Calculation
-    // (Full FFT would require additional library; using texture variance as proxy)
-    function calculateGoosebumpPower(grayData) {
-      // Calculate variance (proxy for texture intensity)
-      let sum = 0;
-      let sumSq = 0;
-      const n = grayData.length;
-      
-      for (let i = 0; i < n; i++) {
-        sum += grayData[i];
-        sumSq += grayData[i] * grayData[i];
-      }
-      
-      const mean = sum / n;
-      const variance = (sumSq / n) - (mean * mean);
-      
-      // Apply edge detection boost (goosebumps create edges)
-      let edgeScore = 0;
-      const w = ROI_SIZE;
-      
-      for (let y = 1; y < w - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const idx = y * w + x;
-          const gx = -grayData[idx - 1] + grayData[idx + 1];
-          const gy = -grayData[idx - w] + grayData[idx + w];
-          edgeScore += Math.sqrt(gx * gx + gy * gy);
-        }
-      }
-      
-      // Combined score
-      return variance * 0.7 + (edgeScore / n) * 0.3;
-    }
-    
+    // ============================================
     // UI Updates
+    // ============================================
+    
     function updateUI(status, intensity, power) {
       const statusBanner = document.getElementById('statusBanner');
       const intensityDisplay = document.getElementById('intensityDisplay');
       const roiBox = document.getElementById('roiBox');
       
-      // Status
       statusBanner.className = 'status-banner ' + status;
       
       if (status === 'baseline') {
         statusBanner.textContent = `🔴 Baseline: ${baselineFrames.length}/${BASELINE_FRAMES}`;
+        roiBox.classList.remove('detecting');
       } else if (status === 'detecting') {
         statusBanner.textContent = `🎉 GOOSEBUMPS DETECTED!`;
         roiBox.classList.add('detecting');
@@ -622,30 +775,26 @@
         roiBox.classList.remove('detecting');
       }
       
-      // Intensity
       intensityDisplay.textContent = intensity.toFixed(1) + '%';
       intensityDisplay.style.color = intensity > DETECTION_THRESHOLD ? '#00ff00' : '#fff';
       
-      // Stats
       document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
       document.getElementById('statCurrent').textContent = power.toFixed(2);
       document.getElementById('statDetections').textContent = detectionCount;
     }
     
-    // Graph Drawing
     function drawGraph() {
       const canvas = document.getElementById('graphCanvas');
       const ctx = graphCtx;
       const w = canvas.width;
       const h = canvas.height;
       
-      // Clear
       ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
       ctx.fillRect(0, 0, w, h);
       
       if (intensityHistory.length < 2) return;
       
-      // Draw threshold line
+      // Threshold line
       const thresholdY = h - (DETECTION_THRESHOLD / 100) * h;
       ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
       ctx.lineWidth = 2;
@@ -656,7 +805,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
       
-      // Draw intensity line
+      // Intensity line
       ctx.strokeStyle = '#00ff00';
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -677,14 +826,12 @@
       ctx.stroke();
     }
     
-    // Haptic Feedback
     function vibrate() {
       if ('vibrate' in navigator) {
         navigator.vibrate([200, 100, 200]);
       }
     }
     
-    // Toggle Graph
     function toggleGraphPanel() {
       const panel = document.getElementById('graphPanel');
       panel.classList.toggle('show');
