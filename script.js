@@ -244,40 +244,69 @@
         video.setAttribute('autoplay', '');
         video.muted = true;
 
-        const deviceId = await pickRearCameraDeviceId();
+        let deviceId;
+        try {
+            deviceId = await pickRearCameraDeviceId();
+        } catch (e) {
+            console.log('Failed to get specific device ID, falling back to default camera');
+        }
 
-        const ladders = [
-          { width: { ideal: 3840 }, height: { ideal: 2160 } },
-          { width: { ideal: 1920 }, height: { ideal: 1080 } },
-          { width: { ideal: 1280 }, height: { ideal: 720 } },
+        // Try different camera configurations in order of preference
+        const constraints = [
+            // First try with specific resolution ladders
+            {
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    deviceId: deviceId ? { exact: deviceId } : undefined,
+                    facingMode: deviceId ? undefined : currentFacingMode,
+                    frameRate: { ideal: 30 }
+                }
+            },
+            // Then try with just facing mode
+            {
+                video: {
+                    facingMode: currentFacingMode
+                }
+            },
+            // Finally try with just basic video
+            {
+                video: true
+            }
         ];
 
         let stream;
         let lastError;
-
-        for (const res of ladders) {
-          const constraints = {
-            video: {
-              ...res,
-              deviceId: deviceId ? { exact: deviceId } : undefined,
-              facingMode: currentFacingMode,
-              frameRate: { ideal: 30, max: 60 }
-            },
-            audio: false
-          };
-          try {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-            break;
-          } catch (e) {
-            lastError = e;
-          }
+        // Try each constraint configuration
+        for (const constraint of constraints) {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraint);
+                if (stream) break;
+            } catch (e) {
+                lastError = e;
+                console.log('Failed to get stream with constraint:', constraint, e);
+            }
         }
 
-        if (!stream) throw lastError || new Error('Failed to get camera stream');
+        if (!stream) {
+            throw new Error('Could not start video source: ' + (lastError?.message || 'Unknown error'));
+        }
 
+        // Set up video element with the stream
+        video = document.querySelector('video');
+        if (!video) {
+            throw new Error('Video element not found');
+        }
+        
         currentStream = stream;
         video.srcObject = stream;
-        await video.play().catch(() => {});
+        
+        // Wait for video to be ready
+        try {
+            await video.play();
+        } catch (e) {
+            throw new Error('Failed to play video: ' + e.message);
+        }
 
         // Apply advanced constraints
         const track = stream.getVideoTracks()[0];
