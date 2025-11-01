@@ -929,6 +929,45 @@
         }
 
         if (!stream) throw lastError || new Error('Failed to get camera stream');
+      
+        function gotFrontCamera(track) {
+  const s = track.getSettings?.() || {};
+  const label = track.label || '';
+  return s.facingMode === 'user' || /front|user/i.test(label);
+}
+
+async function startCamera() {
+  // ... your existing preflight code ...
+
+  // Try your strategies as you do now
+  // after you get `stream`:
+  currentStream = stream;
+  const track = stream.getVideoTracks()[0];
+
+  // If we accidentally got front, retry once with strict rear
+  if (gotFrontCamera(track)) {
+    stream.getTracks().forEach(t => t.stop());
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: 'environment' } }, audio: false
+      });
+    } catch {
+      // fall back to deviceId-based rear pick
+      const deviceId = await pickRearCameraDeviceId();
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: deviceId ? { exact: deviceId } : undefined }, audio: false
+      });
+    }
+    currentStream = stream;
+  }
+
+  video.srcObject = currentStream;
+  await video.play().catch(() => {});
+  // ... rest of your setup (metadata, canvas, processFrames) ...
+}
+
+
+
 
         currentStream = stream;
         video.srcObject = stream;
@@ -1191,7 +1230,7 @@
       intensityHistory = [];
       lastGrayData = null;
       stableFrameCount = 0;
-      updateUI();
+      updateUI('idle', 0, 0);
     }
     
     // Main Processing Loop with Motion Stabilization
@@ -1298,35 +1337,36 @@
     }
     
     // UI Updates
-    function updateUI(status, intensity, power) {
-      const statusBanner = document.getElementById('statusBanner');
-      const statusText = document.getElementById('statusText');
-      const intensityDisplay = document.getElementById('intensityDisplay');
-      const roiBox = document.getElementById('roiBox');
-      
-      statusBanner.className = 'status-banner ' + status;
-      
-      if (status === 'baseline') {
-        statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
-        roiBox.classList.remove('detecting');
-        intensityDisplay.classList.remove('high');
-      } else if (status === 'detecting') {
-        statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
-        roiBox.classList.add('detecting');
-        intensityDisplay.classList.add('high');
-      } else {
-        statusText.textContent = `Monitoring...`;
-        roiBox.classList.remove('detecting');
-        intensityDisplay.classList.remove('high');
-      }
-      
-      intensityDisplay.textContent = intensity.toFixed(1) + '%';
-      
-      document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
-      document.getElementById('statCurrent').textContent = power.toFixed(2);
-      document.getElementById('statDetections').textContent = detectionCount;
-    }
-    
+    function updateUI(status = 'idle', intensity = 0, power = 0) {
+  const statusBanner = document.getElementById('statusBanner');
+  const statusText   = document.getElementById('statusText');
+  const intensityDisplay = document.getElementById('intensityDisplay');
+  const roiBox = document.getElementById('roiBox');
+
+  const safeFixed = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '--';
+
+  statusBanner.className = 'status-banner ' + status;
+
+  if (status === 'baseline') {
+    statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
+    roiBox.classList.remove('detecting');
+    intensityDisplay.classList.remove('high');
+  } else if (status === 'detecting') {
+    statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
+    roiBox.classList.add('detecting');
+    intensityDisplay.classList.add('high');
+  } else {
+    statusText.textContent = `Monitoring...`;
+    roiBox.classList.remove('detecting');
+    intensityDisplay.classList.remove('high');
+  }
+
+  intensityDisplay.textContent = `${safeFixed(intensity, 1)}%`;
+  document.getElementById('statBaseline').textContent = safeFixed(baselinePower, 2);
+  document.getElementById('statCurrent').textContent  = safeFixed(power, 2);
+  document.getElementById('statDetections').textContent = detectionCount;
+}
+
     function drawGraph() {
       const canvas = document.getElementById('graphCanvas');
       const ctx = graphCtx;
