@@ -622,6 +622,9 @@
     let torchOn = false;
     let currentStream = null;
     let currentFacingMode = 'environment';
+    let lastGrayData = null;
+    let stableFrameCount = 0;
+    const STABILITY_THRESHOLD = 5; // Need 5 stable frames before baseline
     
     const BASELINE_FRAMES = 10;
     const DETECTION_THRESHOLD = 30.0;
@@ -683,7 +686,7 @@
       }
     }
     
-    // CHILLER Algorithm
+    // CHILLER Algorithm with motion detection
     function calculateGoosebumpPower(grayData, width, height) {
       let sum = 0, sumSq = 0;
       const n = grayData.length;
@@ -697,7 +700,8 @@
       const variance = (sumSq / n) - (mean * mean);
       const std = Math.sqrt(variance);
       
-      if (std < 1.0) return 0.0;
+      // Check for motion blur / low contrast (blurry image)
+      if (std < 5.0) return 0.0; // Increased threshold for blur detection
       
       const normalized = new Float32Array(n);
       for (let i = 0; i < n; i++) {
@@ -828,21 +832,13 @@
     });
     
     // Camera Setup with Flashlight Support
-async function pickRearCameraDeviceId() {
-  // Get a temp permission so labels are available (iOS needs this)
-  try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
-
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  const cams = devices.filter(d => d.kind === 'videoinput');
-
-  // Prefer anything that looks like a back/rear/wide camera
-  const rearLike = cams.find(d => /back|rear|environment|wide/i.test(d.label || ''));
-  if (rearLike) return rearLike.deviceId;
-
-  // Fallback: last camera is often rear on Android
-  return (cams[cams.length - 1] || {}).deviceId;
-}
-
+    async function pickRearCameraDeviceId() {
+      try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter(d => d.kind === 'videoinput');
+      const rear = videoInputs.find(d => /back|rear|environment/i.test(d.label || ''));
+      return (rear || videoInputs[videoInputs.length - 1] || {}).deviceId;
+    }
 
     async function startCamera() {
       const statusBanner = document.getElementById('statusBanner');
@@ -865,51 +861,60 @@ async function pickRearCameraDeviceId() {
         let lastError;
 
         // Try progressive fallback strategies
-       const strategies = [
-  // 1) Force rear by facingMode EXACT (works on most browsers)
-  async () => navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: { exact: 'environment' },
-      width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
-    },
-    audio: false
-  }),
-
-  // 2) Pick rear by deviceId (after permission, labels available)
-  async () => {
-    const deviceId = await pickRearCameraDeviceId();
-    return navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
-      },
-      audio: false
-    });
-  },
-
-  // 3) Hint (non-exact) rear + 1080p
-  async () => navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: 'environment',
-      width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
-    },
-    audio: false
-  }),
-
-  // 4) Hint rear + 720p
-  async () => navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: 'environment',
-      width: { ideal: 1280 }, height: { ideal: 720 }
-    },
-    audio: false
-  }),
-
-  // 5) Last resort: any camera
-  async () => navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-];
-
-
+        const strategies = [
+          // Strategy 1: High quality with specific device
+          async () => {
+            const deviceId = await pickRearCameraDeviceId();
+            return navigator.mediaDevices.getUserMedia({
+              video: {
+                deviceId: deviceId ? { exact: deviceId } : undefined,
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                frameRate: { ideal: 30 }
+              },
+              audio: false
+            });
+          },
+          // Strategy 2: High quality with facing mode
+          async () => {
+            return navigator.mediaDevices.getUserMedia({
+              video: {
+                facingMode: currentFacingMode,
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                frameRate: { ideal: 30 }
+              },
+              audio: false
+            });
+          },
+          // Strategy 3: Medium quality
+          async () => {
+            return navigator.mediaDevices.getUserMedia({
+              video: {
+                facingMode: currentFacingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+              },
+              audio: false
+            });
+          },
+          // Strategy 4: Basic with facing mode only
+          async () => {
+            return navigator.mediaDevices.getUserMedia({
+              video: {
+                facingMode: currentFacingMode
+              },
+              audio: false
+            });
+          },
+          // Strategy 5: Absolute basic - any camera
+          async () => {
+            return navigator.mediaDevices.getUserMedia({
+              video: true,
+              audio: false
+            });
+          }
+        ];
 
         for (let i = 0; i < strategies.length; i++) {
           try {
@@ -939,20 +944,51 @@ async function pickRearCameraDeviceId() {
         
         const advanced = [];
 
-        if (caps.focusMode && caps.focusMode.includes('continuous')) {
-          advanced.push({ focusMode: 'continuous' });
+        // Focus: Try manual first, then continuous
+        if (caps.focusMode) {
+          if (caps.focusMode.includes('manual')) {
+            advanced.push({ focusMode: 'manual' });
+            // Set focus distance to macro range for close-up (if supported)
+            if (caps.focusDistance) {
+              const midDistance = (caps.focusDistance.min + caps.focusDistance.max) / 2;
+              advanced.push({ focusDistance: midDistance });
+            }
+          } else if (caps.focusMode.includes('continuous')) {
+            advanced.push({ focusMode: 'continuous' });
+          }
         }
+        
+        // Exposure: Continuous auto-exposure
         if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
           advanced.push({ exposureMode: 'continuous' });
         }
+        
+        // White balance: Continuous
         if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) {
           advanced.push({ whiteBalanceMode: 'continuous' });
+        }
+        
+        // ISO: Set lower ISO to reduce noise
+        if (caps.iso) {
+          const lowIso = Math.min(400, caps.iso.max || 400);
+          advanced.push({ iso: lowIso });
+        }
+        
+        // Exposure compensation: Slight increase for better skin detail
+        if (caps.exposureCompensation) {
+          advanced.push({ exposureCompensation: 0.5 });
+        }
+        
+        // Sharpness: Increase if available
+        if (caps.sharpness) {
+          const maxSharp = caps.sharpness.max || 5;
+          advanced.push({ sharpness: Math.min(5, maxSharp) });
         }
 
         if (advanced.length) {
           try { 
             await track.applyConstraints({ advanced }); 
-            console.log('✓ Applied advanced constraints');
+            console.log('✓ Applied advanced constraints:', advanced);
           } catch (e) {
             console.log('Advanced constraints failed (non-critical):', e.message);
           }
@@ -1150,10 +1186,12 @@ async function pickRearCameraDeviceId() {
       frameCount = 0;
       detectionCount = 0;
       intensityHistory = [];
+      lastGrayData = null;
+      stableFrameCount = 0;
       updateUI();
     }
     
-    // Main Processing Loop
+    // Main Processing Loop with Motion Stabilization
     function processFrames() {
       if (!isRunning) return;
       
@@ -1186,10 +1224,39 @@ async function pickRearCameraDeviceId() {
         grayData[i] = Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
       }
       
+      // Check for motion/blur by comparing with previous frame
+      let isStable = true;
+      if (lastGrayData) {
+        let diffSum = 0;
+        for (let i = 0; i < grayData.length; i++) {
+          diffSum += Math.abs(grayData[i] - lastGrayData[i]);
+        }
+        const avgDiff = diffSum / grayData.length;
+        
+        // If average pixel difference is high, image is unstable (motion/blur)
+        if (avgDiff > 3.0) {
+          isStable = false;
+          stableFrameCount = 0;
+        } else {
+          stableFrameCount++;
+        }
+        
+        document.getElementById('debugPower').textContent = `${avgDiff.toFixed(2)} (${isStable ? 'stable' : 'motion'})`;
+      }
+      
+      lastGrayData = new Uint8Array(grayData);
+      
+      // Only process if stable
+      if (!isStable || stableFrameCount < STABILITY_THRESHOLD) {
+        updateUI('baseline', 0, 0);
+        const statusText = document.getElementById('statusText');
+        statusText.textContent = `Stabilizing... (${stableFrameCount}/${STABILITY_THRESHOLD})`;
+        requestAnimationFrame(processFrames);
+        return;
+      }
+      
       const enhanced = applyCLAHE(grayData, ROI_WIDTH, ROI_HEIGHT);
       const power = calculateGoosebumpPower(enhanced, ROI_WIDTH, ROI_HEIGHT);
-      
-      document.getElementById('debugPower').textContent = power.toFixed(2);
       
       if (!baselineEstablished) {
         baselineFrames.push(power);
@@ -1228,39 +1295,35 @@ async function pickRearCameraDeviceId() {
     }
     
     // UI Updates
-   
-    function updateUI(status = 'idle', intensity = 0, power = 0) {
-  const statusBanner = document.getElementById('statusBanner');
-  const statusText   = document.getElementById('statusText');
-  const intensityDisplay = document.getElementById('intensityDisplay');
-  const roiBox = document.getElementById('roiBox');
-
-  const safe = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '--';
-
-  statusBanner.className = 'status-banner ' + status;
-
-  if (status === 'baseline') {
-    statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
-    roiBox.classList.remove('detecting');
-    intensityDisplay.classList.remove('high');
-  } else if (status === 'detecting') {
-    statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
-    roiBox.classList.add('detecting');
-    intensityDisplay.classList.add('high');
-  } else {
-    statusText.textContent = `Monitoring...`;
-    roiBox.classList.remove('detecting');
-    intensityDisplay.classList.remove('high');
-  }
-
-  intensityDisplay.textContent = `${safe(intensity, 1)}%`;
-
-  // Safely render stats
-  document.getElementById('statBaseline').textContent = safe(baselinePower, 2);
-  document.getElementById('statCurrent').textContent  = safe(power, 2);
-  document.getElementById('statDetections').textContent = detectionCount;
-}
-
+    function updateUI(status, intensity, power) {
+      const statusBanner = document.getElementById('statusBanner');
+      const statusText = document.getElementById('statusText');
+      const intensityDisplay = document.getElementById('intensityDisplay');
+      const roiBox = document.getElementById('roiBox');
+      
+      statusBanner.className = 'status-banner ' + status;
+      
+      if (status === 'baseline') {
+        statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
+        roiBox.classList.remove('detecting');
+        intensityDisplay.classList.remove('high');
+      } else if (status === 'detecting') {
+        statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
+        roiBox.classList.add('detecting');
+        intensityDisplay.classList.add('high');
+      } else {
+        statusText.textContent = `Monitoring...`;
+        roiBox.classList.remove('detecting');
+        intensityDisplay.classList.remove('high');
+      }
+      
+      intensityDisplay.textContent = intensity.toFixed(1) + '%';
+      
+      document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
+      document.getElementById('statCurrent').textContent = power.toFixed(2);
+      document.getElementById('statDetections').textContent = detectionCount;
+    }
+    
     function drawGraph() {
       const canvas = document.getElementById('graphCanvas');
       const ctx = graphCtx;
