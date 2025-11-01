@@ -23,6 +23,7 @@
     let deferredPrompt;
     let lastFrameTime = 0;
     let fps = 0;
+    let torchOn = false;
     
     // Constants matching Flask
     const BASELINE_FRAMES = 10;
@@ -384,6 +385,30 @@ async function startCamera() {
     // Start processing
     processFrames();
 
+    // Detect torch capability and show flashlight button when available
+    try {
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      let hasTorch = false;
+      if ('torch' in caps) {
+        hasTorch = true;
+      } else if (window.ImageCapture) {
+        try {
+          const ic = new ImageCapture(track);
+          const pc = await ic.getPhotoCapabilities();
+          if (pc && pc.fillLightMode && pc.fillLightMode.includes('torch')) hasTorch = true;
+        } catch (e) {
+          // ignore
+        }
+      }
+      if (hasTorch) {
+        const btn = document.getElementById('flashBtn');
+        if (btn) btn.style.display = 'inline-block';
+      }
+    } catch (e) {
+      console.log('Torch detection failed', e);
+    }
+
   } catch (error) {
     console.error('Camera setup error:', error);
     const errorMsg =
@@ -418,6 +443,68 @@ async function startCamera() {
       detectionCount = 0;
       intensityHistory = [];
       updateUI();
+    }
+
+    // ============================================
+    // Flashlight / Torch Controls
+    // ============================================
+
+    async function setTorch(on) {
+      try {
+        if (!video || !video.srcObject) return false;
+        const track = video.srcObject.getVideoTracks()[0];
+        if (!track) return false;
+
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if ('torch' in caps) {
+          try {
+            await track.applyConstraints({ advanced: [{ torch: on }] });
+            torchOn = !!on;
+            updateTorchUI();
+            return true;
+          } catch (e) {
+            console.log('applyConstraints torch failed', e);
+          }
+        }
+
+        // Fallback via ImageCapture (some browsers expose fillLightMode)
+        if (window.ImageCapture) {
+          try {
+            const ic = new ImageCapture(track);
+            const pc = await ic.getPhotoCapabilities();
+            if (pc && pc.fillLightMode && pc.fillLightMode.includes('torch')) {
+              await track.applyConstraints({ advanced: [{ torch: on }] });
+              torchOn = !!on;
+              updateTorchUI();
+              return true;
+            }
+          } catch (e) {
+            console.log('ImageCapture torch failed', e);
+          }
+        }
+
+        return false;
+      } catch (err) {
+        console.error('setTorch error', err);
+        return false;
+      }
+    }
+
+    async function toggleFlashlight() {
+      const success = await setTorch(!torchOn);
+      if (!success) alert('Flashlight not supported on this device/browser.');
+    }
+
+    function updateTorchUI() {
+      const btn = document.getElementById('flashBtn');
+      if (!btn) return;
+      if (torchOn) {
+        btn.style.background = '#ffd54f';
+        btn.textContent = '🔦 On';
+      } else {
+        btn.style.background = '';
+        btn.textContent = '🔦';
+      }
     }
     
     // ============================================
