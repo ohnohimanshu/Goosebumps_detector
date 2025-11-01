@@ -393,6 +393,13 @@
     <div class="spinner"></div>
   </div>
 
+  <!-- Visible error panel for mobile debugging -->
+  <div id="errorPanel" style="display:none; position:fixed; left:10px; right:10px; top:60px; background:rgba(255,0,0,0.9); color:#fff; padding:12px; border-radius:8px; z-index:9999; font-family:monospace; white-space:pre-wrap;">
+    <strong>App error</strong>
+    <div id="errorText" style="margin-top:8px;"></div>
+    <div style="text-align:right; margin-top:8px;"><button onclick="document.getElementById('errorPanel').style.display='none'" style="background:#000;color:#fff;border:none;padding:6px 10px;border-radius:6px;">Close</button></div>
+  </div>
+
   <div class="pwa-install-banner" id="installBanner">
     📱 Install CHILLER app for better experience!
     <button id="installBtn">Install Now</button>
@@ -471,6 +478,23 @@
   </div>
 
   <a href="javascript:void(0)" onclick="testCamera()" style="color: white; text-decoration: underline;">Test Camera Access</a>
- <script src="script.js"></script>
+   <script src="script.js"></script>
+   <script>
+     // Show JS errors on screen (useful on mobile where devtools aren't available)
+     function showAppError(msg) {
+       const panel = document.getElementById('errorPanel');
+       const text = document.getElementById('errorText');
+       text.textContent = msg;
+       panel.style.display = 'block';
+     }
+
+     window.addEventListener('error', function (e) {
+       try { showAppError(e.message + '\n' + (e.filename || '') + ':' + (e.lineno || '')); } catch (err) { console.error(err); }
+     });
+
+     window.addEventListener('unhandledrejection', function (e) {
+       try { showAppError((e.reason && (e.reason.message || e.reason)) || 'Unhandled rejection'); } catch (err) { console.error(err); }
+     });
+   </script>
 </body>
 </html>
