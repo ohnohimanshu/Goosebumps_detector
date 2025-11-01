@@ -3,31 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#667eea">
+  <meta name="theme-color" content="#1a1a2e">
   <meta name="description" content="CHILLER - Real-time Goosebump Detection">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <!-- Security and Permissions -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self';">
-  <meta name="permissions-policy" content="camera=*, microphone=()">
-  <!-- Mobile Web App -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="application-name" content="CHILLER">
   <title>CHILLER Mobile</title>
   
-  <link rel="manifest" href="./manifest.json">
-  <link rel="apple-touch-icon" href="./icon-192.png">
-  
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then(reg => console.log('✓ SW registered:', reg.scope))
-          .catch(err => console.error('✗ SW registration failed:', err));
-      });
-    }
-  </script>
-
   <style>
     * {
       margin: 0;
@@ -38,8 +19,8 @@
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: #fff;
+      background: #0f0f1e;
+      color: #e0e0e0;
       overflow: hidden;
       height: 100vh;
       touch-action: manipulation;
@@ -50,52 +31,83 @@
       display: flex;
       flex-direction: column;
       position: relative;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     }
     
     .header {
-      background: rgba(0, 0, 0, 0.3);
-      backdrop-filter: blur(10px);
+      background: rgba(26, 26, 46, 0.95);
+      backdrop-filter: blur(20px);
       padding: 12px 16px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       z-index: 100;
       position: relative;
+      border-bottom: 1px solid rgba(79, 209, 197, 0.2);
     }
     
     .header h1 {
-      font-size: 1.2rem;
+      font-size: 1.3rem;
       font-weight: 700;
+      color: #4fd1c5;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     
     .header-buttons {
       display: flex;
-      gap: 8px;
+      gap: 6px;
+      align-items: center;
     }
     
     .btn {
-      padding: 8px 16px;
-      border-radius: 20px;
+      padding: 8px 14px;
+      border-radius: 12px;
       border: none;
       font-weight: 600;
       cursor: pointer;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
     
     .btn-primary {
-      background: #fff;
-      color: #667eea;
+      background: linear-gradient(135deg, #4fd1c5 0%, #3182ce 100%);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(79, 209, 197, 0.3);
+    }
+    
+    .btn-primary:active {
+      transform: scale(0.95);
+      box-shadow: 0 2px 8px rgba(79, 209, 197, 0.4);
     }
     
     .btn-danger {
-      background: #ff4444;
+      background: linear-gradient(135deg, #fc8181 0%, #e53e3e 100%);
       color: #fff;
+      box-shadow: 0 4px 12px rgba(252, 129, 129, 0.3);
     }
     
-    .btn-small {
-      padding: 6px 12px;
-      font-size: 0.8rem;
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: rgba(79, 209, 197, 0.15);
+      border: 1px solid rgba(79, 209, 197, 0.3);
+      font-size: 1.2rem;
+    }
+    
+    .btn-icon.active {
+      background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+      border-color: #fbbf24;
+      box-shadow: 0 0 20px rgba(251, 191, 36, 0.5);
     }
     
     .camera-container {
@@ -103,14 +115,15 @@
       position: relative;
       background: #000;
       overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     
     #videoElement {
       width: 100%;
       height: 100%;
       object-fit: cover;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: crisp-edges;
     }
     
     .camera-overlay {
@@ -129,129 +142,228 @@
       transform: translate(-50%, -50%);
       width: 160px;
       height: 120px;
-      border: 3px solid rgba(255, 255, 255, 0.5);
-      border-radius: 10px;
-      box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+      border: 2px solid rgba(79, 209, 197, 0.6);
+      border-radius: 16px;
+      box-shadow: 0 0 30px rgba(79, 209, 197, 0.3),
+                  inset 0 0 30px rgba(79, 209, 197, 0.1);
+      background: rgba(79, 209, 197, 0.05);
+    }
+    
+    .roi-box::before {
+      content: '';
+      position: absolute;
+      top: -2px;
+      left: -2px;
+      right: -2px;
+      bottom: -2px;
+      border-radius: 16px;
+      padding: 2px;
+      background: linear-gradient(45deg, 
+        rgba(79, 209, 197, 0.5),
+        rgba(49, 130, 206, 0.5));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, 
+                    linear-gradient(#fff 0 0);
+      mask: linear-gradient(#fff 0 0) content-box, 
+            linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      opacity: 0;
+      animation: borderGlow 3s ease-in-out infinite;
+    }
+    
+    @keyframes borderGlow {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
     }
     
     .roi-box.detecting {
-      border-color: #00ff00;
-      box-shadow: 0 0 30px rgba(0, 255, 0, 0.6);
-      animation: pulse 1s infinite;
+      border-color: #48bb78;
+      box-shadow: 0 0 40px rgba(72, 187, 120, 0.6),
+                  inset 0 0 40px rgba(72, 187, 120, 0.2);
+      animation: detectPulse 0.8s ease-in-out infinite;
     }
     
-    @keyframes pulse {
-      0%, 100% { transform: translate(-50%, -50%) scale(1); }
-      50% { transform: translate(-50%, -50%) scale(1.05); }
+    @keyframes detectPulse {
+      0%, 100% { 
+        transform: translate(-50%, -50%) scale(1);
+        border-width: 2px;
+      }
+      50% { 
+        transform: translate(-50%, -50%) scale(1.08);
+        border-width: 3px;
+      }
     }
     
     .status-banner {
       position: absolute;
-      top: 20px;
+      top: 16px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(10px);
-      padding: 12px 24px;
-      border-radius: 25px;
+      background: rgba(26, 26, 46, 0.95);
+      backdrop-filter: blur(20px);
+      padding: 10px 20px;
+      border-radius: 20px;
       font-weight: 700;
-      font-size: 1rem;
-      border: 2px solid rgba(255, 255, 255, 0.2);
+      font-size: 0.9rem;
+      border: 1px solid rgba(79, 209, 197, 0.3);
       white-space: nowrap;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     
-    .status-banner.baseline {
-      background: rgba(255, 0, 0, 0.8);
-      border-color: #ff0000;
+    .status-banner::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #718096;
+      animation: statusPulse 2s ease-in-out infinite;
     }
     
-    .status-banner.monitoring {
-      background: rgba(128, 128, 128, 0.8);
-      border-color: #888;
+    .status-banner.baseline::before {
+      background: #fc8181;
     }
     
-    .status-banner.detecting {
-      background: rgba(0, 255, 0, 0.8);
-      border-color: #00ff00;
-      animation: pulse 0.5s infinite;
+    .status-banner.monitoring::before {
+      background: #4fd1c5;
+    }
+    
+    .status-banner.detecting::before {
+      background: #48bb78;
+      animation: detectingPulse 0.6s ease-in-out infinite;
+    }
+    
+    @keyframes statusPulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
+    }
+    
+    @keyframes detectingPulse {
+      0%, 100% { 
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% { 
+        opacity: 0.5;
+        transform: scale(1.3);
+      }
     }
     
     .intensity-display {
       position: absolute;
-      bottom: 20px;
+      bottom: 80px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.9);
-      padding: 16px 32px;
-      border-radius: 30px;
-      font-size: 2rem;
+      background: rgba(26, 26, 46, 0.95);
+      backdrop-filter: blur(20px);
+      padding: 12px 28px;
+      border-radius: 24px;
+      font-size: 2.2rem;
       font-weight: 900;
       font-family: 'Courier New', monospace;
-      border: 3px solid rgba(255, 255, 255, 0.3);
+      border: 2px solid rgba(79, 209, 197, 0.3);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      color: #4fd1c5;
+      min-width: 140px;
+      text-align: center;
+    }
+    
+    .intensity-display.high {
+      color: #48bb78;
+      border-color: #48bb78;
+      box-shadow: 0 8px 32px rgba(72, 187, 120, 0.4),
+                  0 0 40px rgba(72, 187, 120, 0.2);
     }
     
     .graph-panel {
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(10px);
+      background: rgba(26, 26, 46, 0.98);
+      backdrop-filter: blur(20px);
       padding: 16px;
       max-height: 0;
       overflow: hidden;
-      transition: max-height 0.3s ease;
+      transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      border-top: 1px solid rgba(79, 209, 197, 0.2);
     }
     
     .graph-panel.show {
-      max-height: 250px;
+      max-height: 280px;
+    }
+    
+    .graph-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    
+    .graph-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #4fd1c5;
     }
     
     .graph-canvas {
       width: 100%;
-      height: 200px;
-      background: rgba(255, 255, 255, 0.05);
-      border-radius: 10px;
+      height: 140px;
+      background: rgba(15, 15, 30, 0.8);
+      border-radius: 12px;
+      border: 1px solid rgba(79, 209, 197, 0.2);
     }
     
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 10px;
       margin-top: 12px;
     }
     
     .stat-item {
-      background: rgba(255, 255, 255, 0.1);
-      padding: 8px;
-      border-radius: 8px;
+      background: rgba(79, 209, 197, 0.1);
+      padding: 10px;
+      border-radius: 12px;
       text-align: center;
+      border: 1px solid rgba(79, 209, 197, 0.2);
     }
     
     .stat-label {
       font-size: 0.7rem;
       opacity: 0.7;
       text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #a0aec0;
     }
     
     .stat-value {
-      font-size: 1.1rem;
+      font-size: 1.2rem;
       font-weight: 700;
       margin-top: 4px;
+      color: #4fd1c5;
     }
     
     .toggle-graph {
       position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: 56px;
-      height: 56px;
+      bottom: 16px;
+      right: 16px;
+      width: 52px;
+      height: 52px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.2);
-      border: 2px solid rgba(255, 255, 255, 0.3);
+      background: rgba(26, 26, 46, 0.95);
+      backdrop-filter: blur(20px);
+      border: 2px solid rgba(79, 209, 197, 0.4);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.5rem;
+      font-size: 1.4rem;
       cursor: pointer;
       z-index: 100;
-      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      transition: all 0.3s;
+    }
+    
+    .toggle-graph:active {
+      transform: scale(0.9);
     }
     
     .splash-screen {
@@ -260,7 +372,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -275,27 +387,35 @@
     }
     
     .splash-logo {
-      font-size: 4rem;
+      font-size: 5rem;
       margin-bottom: 20px;
+      animation: float 3s ease-in-out infinite;
+    }
+    
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
     }
     
     .splash-title {
-      font-size: 2rem;
+      font-size: 2.2rem;
       font-weight: 700;
-      margin-bottom: 10px;
+      color: #4fd1c5;
+      margin-bottom: 8px;
     }
     
     .splash-subtitle {
       font-size: 1rem;
-      opacity: 0.8;
+      opacity: 0.7;
       margin-bottom: 40px;
+      color: #a0aec0;
     }
     
     .spinner {
       width: 40px;
       height: 40px;
-      border: 4px solid rgba(255, 255, 255, 0.3);
-      border-top-color: #fff;
+      border: 3px solid rgba(79, 209, 197, 0.2);
+      border-top-color: #4fd1c5;
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
@@ -310,56 +430,35 @@
       left: 50%;
       transform: translate(-50%, -50%);
       text-align: center;
-      background: rgba(0, 0, 0, 0.9);
-      padding: 30px;
+      background: rgba(26, 26, 46, 0.98);
+      backdrop-filter: blur(30px);
+      padding: 28px;
       border-radius: 20px;
       max-width: 85%;
       z-index: 50;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(79, 209, 197, 0.3);
     }
     
     .instructions h2 {
       margin-bottom: 20px;
+      color: #4fd1c5;
     }
     
     .instructions ol {
       text-align: left;
       margin: 20px 0;
       padding-left: 20px;
+      color: #e0e0e0;
     }
     
     .instructions li {
       margin: 10px 0;
-      line-height: 1.5;
+      line-height: 1.6;
     }
     
-    .pwa-install-banner {
-      background: rgba(255, 200, 0, 0.95);
-      color: #000;
-      padding: 16px;
-      text-align: center;
-      font-weight: 600;
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      z-index: 200;
-      display: none;
-    }
-    
-    .pwa-install-banner.show {
-      display: block;
-    }
-    
-    .pwa-install-banner button {
-      margin-top: 10px;
-      padding: 10px 20px;
-      background: #000;
-      color: #fff;
-      border: none;
-      border-radius: 20px;
-      font-weight: 700;
-      cursor: pointer;
+    .instructions strong {
+      color: #4fd1c5;
     }
     
     #processingCanvas {
@@ -368,69 +467,99 @@
     
     .debug-info {
       position: fixed;
-      top: 80px;
+      top: 70px;
       right: 10px;
-      background: rgba(0, 0, 0, 0.8);
-      padding: 10px;
-      border-radius: 8px;
+      background: rgba(26, 26, 46, 0.98);
+      backdrop-filter: blur(20px);
+      padding: 12px;
+      border-radius: 12px;
       font-size: 0.7rem;
       font-family: monospace;
       z-index: 150;
       max-width: 200px;
       display: none;
+      border: 1px solid rgba(79, 209, 197, 0.3);
+      color: #a0aec0;
     }
     
     .debug-info.show {
       display: block;
+    }
+
+    .error-panel {
+      display: none;
+      position: fixed;
+      left: 10px;
+      right: 10px;
+      top: 60px;
+      background: rgba(252, 129, 129, 0.98);
+      backdrop-filter: blur(20px);
+      color: #fff;
+      padding: 14px;
+      border-radius: 12px;
+      z-index: 9999;
+      font-family: monospace;
+      white-space: pre-wrap;
+      font-size: 0.8rem;
+      box-shadow: 0 8px 32px rgba(252, 129, 129, 0.4);
+      border: 1px solid rgba(252, 129, 129, 0.6);
+    }
+    
+    .error-panel strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+    
+    .close-btn {
+      background: rgba(26, 26, 46, 0.9);
+      color: #fff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
   <div class="splash-screen" id="splashScreen">
     <div class="splash-logo">❄️</div>
-    <div class="splash-title">CHILLER Mobile</div>
+    <div class="splash-title">CHILLER</div>
     <div class="splash-subtitle">Real-time Goosebump Detection</div>
     <div class="spinner"></div>
   </div>
 
-  <!-- Visible error panel for mobile debugging -->
-  <div id="errorPanel" style="display:none; position:fixed; left:10px; right:10px; top:60px; background:rgba(255,0,0,0.9); color:#fff; padding:12px; border-radius:8px; z-index:9999; font-family:monospace; white-space:pre-wrap;">
-    <strong>App error</strong>
-    <div id="errorText" style="margin-top:8px;"></div>
-    <div style="text-align:right; margin-top:8px;"><button onclick="document.getElementById('errorPanel').style.display='none'" style="background:#000;color:#fff;border:none;padding:6px 10px;border-radius:6px;">Close</button></div>
-  </div>
-
-  <div class="pwa-install-banner" id="installBanner">
-    📱 Install CHILLER app for better experience!
-    <button id="installBtn">Install Now</button>
-    <button onclick="document.getElementById('installBanner').style.display='none'" style="margin-left: 10px; background: #666;">Later</button>
+  <div id="errorPanel" class="error-panel">
+    <strong>⚠️ Application Error</strong>
+    <div id="errorText"></div>
+    <div style="text-align: right;">
+      <button class="close-btn" onclick="document.getElementById('errorPanel').style.display='none'">Close</button>
+    </div>
   </div>
 
   <div class="app-container">
     <div class="header">
-      <h1>❄️ CHILLER</h1>
+      <h1><span>❄️</span> CHILLER</h1>
       <div class="header-buttons">
-        <button class="btn btn-small btn-primary" id="switchCameraBtn" style="display:none;" onclick="switchCamera()">📷</button>
-        <button class="btn btn-small btn-primary" id="flashBtn" style="display:none;" onclick="toggleFlashlight()">🔦</button>
-        <button class="btn btn-small btn-primary" id="debugBtn" onclick="toggleDebug()">Debug</button>
-        <button class="btn btn-primary" id="startBtn">Start</button>
-        <button class="btn btn-danger" id="stopBtn" style="display:none;">Stop</button>
+        <button class="btn btn-icon" id="flashBtn" style="display:none;" onclick="toggleFlashlight()" title="Flashlight">💡</button>
+        <button class="btn btn-icon" id="switchCameraBtn" style="display:none;" onclick="switchCamera()" title="Switch Camera">🔄</button>
+        <button class="btn btn-primary" id="startBtn" onclick="startCamera()">Start</button>
+        <button class="btn btn-danger" id="stopBtn" style="display:none;" onclick="stopCamera()">Stop</button>
       </div>
     </div>
 
     <div class="camera-container">
-      <video id="videoElement" playsinline autoplay muted style="width:100%; height:auto; object-fit:contain; image-rendering:auto;"></video>
-
+      <video id="videoElement" playsinline autoplay muted></video>
       <canvas id="processingCanvas"></canvas>
       
       <div class="camera-overlay">
         <div class="roi-box" id="roiBox"></div>
         <div class="status-banner monitoring" id="statusBanner">
-          Initializing...
+          <span id="statusText">Initializing...</span>
         </div>
-        <div class="intensity-display" id="intensityDisplay">
-          0.0%
-        </div>
+        <div class="intensity-display" id="intensityDisplay">0.0%</div>
       </div>
 
       <div class="instructions" id="instructions">
@@ -439,9 +568,9 @@
           <li>Tap <strong>Start</strong> to begin</li>
           <li>Allow camera access when prompted</li>
           <li>Point camera at your <strong>inner forearm</strong></li>
-          <li>Keep arm centered in the <strong>white box</strong></li>
-          <li>Stay still for <strong>10 seconds</strong> (baseline calibration)</li>
-          <li>Watch for <strong>green alerts</strong> when goosebumps detected!</li>
+          <li>Keep arm centered in the <strong>box</strong></li>
+          <li>Stay still for <strong>10 seconds</strong> (baseline)</li>
+          <li>Watch for <strong>green alerts</strong> when detected!</li>
         </ol>
         <button class="btn btn-primary" onclick="document.getElementById('instructions').style.display='none'">Got it!</button>
       </div>
@@ -452,10 +581,13 @@
       FPS: <span id="debugFps">--</span><br>
       Baseline: <span id="debugBaseline">--</span><br>
       Power: <span id="debugPower">--</span><br>
-      PWA: <span id="debugPwa">--</span>
+      Torch: <span id="debugTorch">--</span>
     </div>
 
     <div class="graph-panel" id="graphPanel">
+      <div class="graph-header">
+        <div class="graph-title">📊 Intensity History</div>
+      </div>
       <canvas class="graph-canvas" id="graphCanvas"></canvas>
       <div class="stats-grid">
         <div class="stat-item">
@@ -473,29 +605,8 @@
       </div>
     </div>
 
-    <div class="toggle-graph" id="toggleGraph" onclick="toggleGraphPanel()">
-      📊
-    </div>
+    <div class="toggle-graph" id="toggleGraph" onclick="toggleGraphPanel()">📊</div>
   </div>
 
-  <a href="javascript:void(0)" onclick="testCamera()" style="color: white; text-decoration: underline;">Test Camera Access</a>
-   <script src="script.js"></script>
-   <script>
-     // Show JS errors on screen (useful on mobile where devtools aren't available)
-     function showAppError(msg) {
-       const panel = document.getElementById('errorPanel');
-       const text = document.getElementById('errorText');
-       text.textContent = msg;
-       panel.style.display = 'block';
-     }
-
-     window.addEventListener('error', function (e) {
-       try { showAppError(e.message + '\n' + (e.filename || '') + ':' + (e.lineno || '')); } catch (err) { console.error(err); }
-     });
-
-     window.addEventListener('unhandledrejection', function (e) {
-       try { showAppError((e.reason && (e.reason.message || e.reason)) || 'Unhandled rejection'); } catch (err) { console.error(err); }
-     });
-   </script>
 </body>
 </html>

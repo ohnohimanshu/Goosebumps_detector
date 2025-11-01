@@ -1,16 +1,4 @@
-
-  async function testCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach(track => track.stop());
-      alert('Camera access successful! Now click Start.');
-    } catch (error) {
-      alert('Camera error: ' + error.message);
-    }
-  }
-
-
-    let video, canvas, ctx;
+ let video, canvas, ctx;
     let isRunning = false;
     let baselineFrames = [];
     let baselinePower = 0;
@@ -20,12 +8,12 @@
     let frameCount = 0;
     let intensityHistory = [];
     let graphCtx;
-    let deferredPrompt;
     let lastFrameTime = 0;
     let fps = 0;
     let torchOn = false;
+    let currentStream = null;
+    let currentFacingMode = 'environment';
     
-    // Constants matching Flask
     const BASELINE_FRAMES = 10;
     const DETECTION_THRESHOLD = 30.0;
     const ROI_WIDTH = 160;
@@ -36,39 +24,23 @@
     const FREQ_MAX_MM = 0.75;
     const PIXEL_SIZE_MM = 0.25;
     
-    // ============================================
-    // PWA Install Handler
-    // ============================================
-    
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      deferredPrompt = e;
-      document.getElementById('installBanner').classList.add('show');
-      document.getElementById('debugPwa').textContent = 'Ready';
+    // Error handling
+    function showAppError(msg) {
+      const panel = document.getElementById('errorPanel');
+      const text = document.getElementById('errorText');
+      text.textContent = msg;
+      panel.style.display = 'block';
+    }
+
+    window.addEventListener('error', e => {
+      try { showAppError(e.message + '\n' + (e.filename || '') + ':' + (e.lineno || '')); } catch (err) { console.error(err); }
+    });
+
+    window.addEventListener('unhandledrejection', e => {
+      try { showAppError((e.reason?.message || e.reason) || 'Unhandled rejection'); } catch (err) { console.error(err); }
     });
     
-    document.getElementById('installBtn').addEventListener('click', async () => {
-      if (!deferredPrompt) {
-        alert('Install option not available. Try:\n1. Chrome menu → "Install app"\n2. Or "Add to Home Screen"');
-        return;
-      }
-      
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      console.log('Install outcome:', outcome);
-      deferredPrompt = null;
-      document.getElementById('installBanner').classList.remove('show');
-    });
-    
-    window.addEventListener('appinstalled', () => {
-      console.log('✓ CHILLER installed!');
-      document.getElementById('debugPwa').textContent = 'Installed';
-    });
-    
-    // ============================================
     // FFT Implementation
-    // ============================================
-    
     function fft(real, imag) {
       const n = real.length;
       if (n <= 1) return;
@@ -102,10 +74,7 @@
       }
     }
     
-    // ============================================
     // CHILLER Algorithm
-    // ============================================
-    
     function calculateGoosebumpPower(grayData, width, height) {
       let sum = 0, sumSq = 0;
       const n = grayData.length;
@@ -167,10 +136,7 @@
       return maxPower;
     }
     
-    // ============================================
     // CLAHE Enhancement
-    // ============================================
-    
     function applyCLAHE(grayData, width, height) {
       const tileSize = 8;
       const tilesX = Math.floor(width / tileSize);
@@ -232,10 +198,7 @@
       return enhanced;
     }
     
-    // ============================================
     // Initialize
-    // ============================================
-    
     window.addEventListener('load', () => {
       setTimeout(() => {
         document.getElementById('splashScreen').classList.add('hidden');
@@ -252,185 +215,252 @@
       const graphCanvas = document.getElementById('graphCanvas');
       graphCtx = graphCanvas.getContext('2d');
       graphCanvas.width = graphCanvas.offsetWidth;
-      graphCanvas.height = 200;
-      
-      document.getElementById('startBtn').addEventListener('click', startCamera);
-      document.getElementById('stopBtn').addEventListener('click', stopCamera);
-      
-      // Check if already installed
-      if (window.matchMedia('(display-mode: standalone)').matches) {
-        document.getElementById('debugPwa').textContent = 'Running';
-      }
+      graphCanvas.height = 140;
     });
     
-    // ============================================
-    // HIGH QUALITY Camera Setup
-    // ============================================
-    
+    // Camera Setup with Flashlight Support
     async function pickRearCameraDeviceId() {
-  // Ensure we have permission so labels are available
-  try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  // Prefer labels indicating back/rear, else last video input (often rear on phones)
-  const videoInputs = devices.filter(d => d.kind === 'videoinput');
-  const rear = videoInputs.find(d =>
-    /back|rear|environment/i.test(d.label || '')
-  );
-  return (rear || videoInputs[videoInputs.length - 1] || {}).deviceId;
-}
-
-async function startCamera() {
-  const statusBanner = document.getElementById('statusBanner');
-  try {
-    statusBanner.textContent = 'Requesting high-quality camera…';
-
-    if (!window.isSecureContext) {
-      throw new Error('Page must be loaded over HTTPS. Current URL: ' + window.location.href);
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('Camera API not supported in this browser');
+      try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter(d => d.kind === 'videoinput');
+      const rear = videoInputs.find(d => /back|rear|environment/i.test(d.label || ''));
+      return (rear || videoInputs[videoInputs.length - 1] || {}).deviceId;
     }
 
-    // iOS: allow inline playback
-    video.setAttribute('playsinline', '');
-    video.setAttribute('autoplay', '');
-    video.muted = true; // helps autoplay on some browsers
-
-    const deviceId = await pickRearCameraDeviceId();
-
-    // Try a resolution "ladder": 4K → 1080p → 720p
-    const ladders = [
-      { width: { ideal: 3840 }, height: { ideal: 2160 } }, // 4K
-      { width: { ideal: 1920 }, height: { ideal: 1080 } }, // 1080p
-      { width: { ideal: 1280 }, height: { ideal: 720 } },  // 720p
-    ];
-
-    let stream;
-    let lastError;
-
-    for (const res of ladders) {
-      const constraints = {
-        video: {
-          ...res,
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          facingMode: 'environment',         // hint; deviceId is primary selector
-          frameRate: { ideal: 30, max: 60 }  // smoother frames if possible
-        },
-        audio: false
-      };
+    async function startCamera() {
+      const statusBanner = document.getElementById('statusBanner');
+      const statusText = document.getElementById('statusText');
       try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        break; // success at this rung
-      } catch (e) {
-        lastError = e;
-      }
-    }
+        statusText.textContent = 'Requesting camera...';
 
-    if (!stream) throw lastError || new Error('Failed to get camera stream');
-
-    // Bind and play
-    video.srcObject = stream;
-    await video.play().catch(() => {}); // some browsers need a user gesture anyway
-
-    // Try upgrading the active track with capabilities (focus/exposure/white balance, etc.)
-    const track = stream.getVideoTracks()[0];
-    const caps = track.getCapabilities?.() || {};
-    const advanced = [];
-
-    // Continuous focus (Chromium / some Androids)
-    if (caps.focusMode && caps.focusMode.includes('continuous')) {
-      advanced.push({ focusMode: 'continuous' });
-    }
-    // Auto exposure / white balance where available
-    if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
-      advanced.push({ exposureMode: 'continuous' });
-    }
-    if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) {
-      advanced.push({ whiteBalanceMode: 'continuous' });
-    }
-    // Prefer 30–60 fps if supported
-    if (caps.frameRate) {
-      advanced.push({ frameRate: Math.min(60, caps.frameRate.max || 30) });
-    }
-    // Nudge up resolution to capability max if the browser lowballed us
-    if (caps.width && caps.height) {
-      advanced.push({
-        width: Math.min(3840, caps.width.max || 1920),
-        height: Math.min(2160, caps.height.max || 1080),
-      });
-    }
-
-    if (advanced.length) {
-      try { await track.applyConstraints({ advanced }); } catch (e) { /* ignore if unsupported */ }
-    }
-
-    // Update UI and canvas sizing
-    isRunning = true;
-    document.getElementById('startBtn').style.display = 'none';
-    document.getElementById('stopBtn').style.display = 'block';
-    document.getElementById('instructions').style.display = 'none';
-
-    // Wait for metadata to ensure correct dimensions
-    await new Promise(r => {
-      if (video.readyState >= 1) return r();
-      video.onloadedmetadata = () => r();
-      setTimeout(r, 1000);
-    });
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    console.log(`Actual stream:`, stream.getVideoTracks()[0].getSettings());
-    statusBanner.textContent = `Camera: ${video.videoWidth}×${video.videoHeight}`;
-
-    // Start processing
-    processFrames();
-
-    // Detect torch capability and show flashlight button when available
-    try {
-      const track = stream.getVideoTracks()[0];
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      let hasTorch = false;
-      if ('torch' in caps) {
-        hasTorch = true;
-      } else if (window.ImageCapture) {
-        try {
-          const ic = new ImageCapture(track);
-          const pc = await ic.getPhotoCapabilities();
-          if (pc && pc.fillLightMode && pc.fillLightMode.includes('torch')) hasTorch = true;
-        } catch (e) {
-          // ignore
+        if (!window.isSecureContext) {
+          throw new Error('Page must be loaded over HTTPS');
         }
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Camera API not supported');
+        }
+
+        video.setAttribute('playsinline', '');
+        video.setAttribute('autoplay', '');
+        video.muted = true;
+
+        const deviceId = await pickRearCameraDeviceId();
+
+        const ladders = [
+          { width: { ideal: 3840 }, height: { ideal: 2160 } },
+          { width: { ideal: 1920 }, height: { ideal: 1080 } },
+          { width: { ideal: 1280 }, height: { ideal: 720 } },
+        ];
+
+        let stream;
+        let lastError;
+
+        for (const res of ladders) {
+          const constraints = {
+            video: {
+              ...res,
+              deviceId: deviceId ? { exact: deviceId } : undefined,
+              facingMode: currentFacingMode,
+              frameRate: { ideal: 30, max: 60 }
+            },
+            audio: false
+          };
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            break;
+          } catch (e) {
+            lastError = e;
+          }
+        }
+
+        if (!stream) throw lastError || new Error('Failed to get camera stream');
+
+        currentStream = stream;
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+
+        // Apply advanced constraints
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities?.() || {};
+        const advanced = [];
+
+        if (caps.focusMode && caps.focusMode.includes('continuous')) {
+          advanced.push({ focusMode: 'continuous' });
+        }
+        if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
+          advanced.push({ exposureMode: 'continuous' });
+        }
+        if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) {
+          advanced.push({ whiteBalanceMode: 'continuous' });
+        }
+        if (caps.frameRate) {
+          advanced.push({ frameRate: Math.min(60, caps.frameRate.max || 30) });
+        }
+        if (caps.width && caps.height) {
+          advanced.push({
+            width: Math.min(3840, caps.width.max || 1920),
+            height: Math.min(2160, caps.height.max || 1080),
+          });
+        }
+
+        if (advanced.length) {
+          try { await track.applyConstraints({ advanced }); } catch (e) {}
+        }
+
+        isRunning = true;
+        document.getElementById('startBtn').style.display = 'none';
+        document.getElementById('stopBtn').style.display = 'block';
+        document.getElementById('instructions').style.display = 'none';
+
+        await new Promise(r => {
+          if (video.readyState >= 1) return r();
+          video.onloadedmetadata = () => r();
+          setTimeout(r, 1000);
+        });
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        const settings = track.getSettings();
+        document.getElementById('debugRes').textContent = `${video.videoWidth}×${video.videoHeight}`;
+        statusText.textContent = `Camera: ${video.videoWidth}×${video.videoHeight}`;
+
+        processFrames();
+
+        // Check torch capability
+        checkTorchSupport();
+
+      } catch (error) {
+        console.error('Camera setup error:', error);
+        const errorMsg = (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError')
+          ? 'Camera access denied. Enable camera in settings and refresh.'
+          : `Camera error: ${error.message}`;
+        alert(errorMsg);
+        statusText.textContent = 'Camera error';
+        statusBanner.classList.add('baseline');
       }
-      if (hasTorch) {
-        const btn = document.getElementById('flashBtn');
-        if (btn) btn.style.display = 'inline-block';
-      }
-    } catch (e) {
-      console.log('Torch detection failed', e);
     }
 
-  } catch (error) {
-    console.error('Camera setup error:', error);
-    const errorMsg =
-      (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError')
-        ? 'Camera access denied. Enable camera in site settings and refresh.'
-        : `Camera error: ${error.message}\n\nCheck:\n1) HTTPS\n2) Permissions\n3) No other app using camera`;
-    alert(errorMsg);
-    statusBanner.textContent = 'Camera error - check permissions';
-    statusBanner.style.backgroundColor = 'rgba(255,0,0,0.8)';
-  }
-}
+    async function checkTorchSupport() {
+      try {
+        if (!currentStream) return;
+        const track = currentStream.getVideoTracks()[0];
+        const caps = track.getCapabilities?.() || {};
+        
+        let hasTorch = false;
+        
+        if ('torch' in caps) {
+          hasTorch = true;
+          document.getElementById('debugTorch').textContent = 'Available';
+        } else if (window.ImageCapture) {
+          try {
+            const ic = new ImageCapture(track);
+            const pc = await ic.getPhotoCapabilities();
+            if (pc?.fillLightMode?.includes('torch')) {
+              hasTorch = true;
+              document.getElementById('debugTorch').textContent = 'Available (IC)';
+            }
+          } catch (e) {}
+        }
+        
+        if (hasTorch) {
+          document.getElementById('flashBtn').style.display = 'flex';
+        } else {
+          document.getElementById('debugTorch').textContent = 'Not available';
+        }
+      } catch (e) {
+        console.log('Torch detection failed', e);
+        document.getElementById('debugTorch').textContent = 'Error';
+      }
+    }
 
+    async function setTorch(on) {
+      try {
+        if (!currentStream) return false;
+        const track = currentStream.getVideoTracks()[0];
+        if (!track) return false;
 
+        const caps = track.getCapabilities?.() || {};
+        
+        // Method 1: Direct torch constraint
+        if ('torch' in caps) {
+          try {
+            await track.applyConstraints({ 
+              advanced: [{ torch: on }] 
+            });
+            torchOn = !!on;
+            updateTorchUI();
+            document.getElementById('debugTorch').textContent = on ? 'ON' : 'OFF';
+            return true;
+          } catch (e) {
+            console.log('Method 1 failed:', e);
+          }
+        }
 
+        // Method 2: ImageCapture API
+        if (window.ImageCapture) {
+          try {
+            const ic = new ImageCapture(track);
+            const pc = await ic.getPhotoCapabilities();
+            if (pc?.fillLightMode?.includes('torch')) {
+              await track.applyConstraints({
+                advanced: [{ fillLightMode: on ? 'torch' : 'off' }]
+              });
+              torchOn = !!on;
+              updateTorchUI();
+              document.getElementById('debugTorch').textContent = on ? 'ON (IC)' : 'OFF';
+              return true;
+            }
+          } catch (e) {
+            console.log('Method 2 failed:', e);
+          }
+        }
+
+        return false;
+      } catch (err) {
+        console.error('setTorch error', err);
+        return false;
+      }
+    }
+
+    async function toggleFlashlight() {
+      const success = await setTorch(!torchOn);
+      if (!success) {
+        alert('Flashlight not supported on this device/browser. Try Chrome or Safari on a mobile device with rear camera.');
+      }
+    }
+
+    function updateTorchUI() {
+      const btn = document.getElementById('flashBtn');
+      if (!btn) return;
+      if (torchOn) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+
+    async function switchCamera() {
+      if (!isRunning) return;
+      
+      stopCamera();
+      currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+      await new Promise(r => setTimeout(r, 300));
+      startCamera();
+    }
 
     function stopCamera() {
       isRunning = false;
-      if (video.srcObject) {
-        video.srcObject.getTracks().forEach(track => track.stop());
+      if (torchOn) {
+        setTorch(false);
+      }
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
       }
       document.getElementById('startBtn').style.display = 'block';
       document.getElementById('stopBtn').style.display = 'none';
+      document.getElementById('flashBtn').style.display = 'none';
       resetState();
     }
     
@@ -444,77 +474,11 @@ async function startCamera() {
       intensityHistory = [];
       updateUI();
     }
-
-    // ============================================
-    // Flashlight / Torch Controls
-    // ============================================
-
-    async function setTorch(on) {
-      try {
-        if (!video || !video.srcObject) return false;
-        const track = video.srcObject.getVideoTracks()[0];
-        if (!track) return false;
-
-        const caps = track.getCapabilities ? track.getCapabilities() : {};
-        if ('torch' in caps) {
-          try {
-            await track.applyConstraints({ advanced: [{ torch: on }] });
-            torchOn = !!on;
-            updateTorchUI();
-            return true;
-          } catch (e) {
-            console.log('applyConstraints torch failed', e);
-          }
-        }
-
-        // Fallback via ImageCapture (some browsers expose fillLightMode)
-        if (window.ImageCapture) {
-          try {
-            const ic = new ImageCapture(track);
-            const pc = await ic.getPhotoCapabilities();
-            if (pc && pc.fillLightMode && pc.fillLightMode.includes('torch')) {
-              await track.applyConstraints({ advanced: [{ torch: on }] });
-              torchOn = !!on;
-              updateTorchUI();
-              return true;
-            }
-          } catch (e) {
-            console.log('ImageCapture torch failed', e);
-          }
-        }
-
-        return false;
-      } catch (err) {
-        console.error('setTorch error', err);
-        return false;
-      }
-    }
-
-    async function toggleFlashlight() {
-      const success = await setTorch(!torchOn);
-      if (!success) alert('Flashlight not supported on this device/browser.');
-    }
-
-    function updateTorchUI() {
-      const btn = document.getElementById('flashBtn');
-      if (!btn) return;
-      if (torchOn) {
-        btn.style.background = '#ffd54f';
-        btn.textContent = '🔦 On';
-      } else {
-        btn.style.background = '';
-        btn.textContent = '🔦';
-      }
-    }
     
-    // ============================================
     // Main Processing Loop
-    // ============================================
-    
     function processFrames() {
       if (!isRunning) return;
       
-      // Check if video is actually playing
       if (video.paused || video.ended || !video.videoWidth) {
         requestAnimationFrame(processFrames);
         return;
@@ -522,7 +486,6 @@ async function startCamera() {
       
       frameCount++;
       
-      // Calculate FPS
       const now = performance.now();
       if (lastFrameTime) {
         fps = 1000 / (now - lastFrameTime);
@@ -530,7 +493,6 @@ async function startCamera() {
       }
       lastFrameTime = now;
       
-      // Draw with high quality settings
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
@@ -587,30 +549,30 @@ async function startCamera() {
       requestAnimationFrame(processFrames);
     }
     
-    // ============================================
     // UI Updates
-    // ============================================
-    
     function updateUI(status, intensity, power) {
       const statusBanner = document.getElementById('statusBanner');
+      const statusText = document.getElementById('statusText');
       const intensityDisplay = document.getElementById('intensityDisplay');
       const roiBox = document.getElementById('roiBox');
       
       statusBanner.className = 'status-banner ' + status;
       
       if (status === 'baseline') {
-        statusBanner.textContent = `🔴 Baseline: ${baselineFrames.length}/${BASELINE_FRAMES}`;
+        statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
         roiBox.classList.remove('detecting');
+        intensityDisplay.classList.remove('high');
       } else if (status === 'detecting') {
-        statusBanner.textContent = `🎉 GOOSEBUMPS DETECTED!`;
+        statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
         roiBox.classList.add('detecting');
+        intensityDisplay.classList.add('high');
       } else {
-        statusBanner.textContent = `👁️ Monitoring...`;
+        statusText.textContent = `Monitoring...`;
         roiBox.classList.remove('detecting');
+        intensityDisplay.classList.remove('high');
       }
       
       intensityDisplay.textContent = intensity.toFixed(1) + '%';
-      intensityDisplay.style.color = intensity > DETECTION_THRESHOLD ? '#00ff00' : '#fff';
       
       document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
       document.getElementById('statCurrent').textContent = power.toFixed(2);
@@ -623,26 +585,63 @@ async function startCamera() {
       const w = canvas.width;
       const h = canvas.height;
       
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+      // Clear with gradient background
+      const gradient = ctx.createLinearGradient(0, 0, 0, h);
+      gradient.addColorStop(0, 'rgba(15, 15, 30, 0.95)');
+      gradient.addColorStop(1, 'rgba(26, 26, 46, 0.95)');
+      ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, w, h);
       
       if (intensityHistory.length < 2) return;
       
+      // Draw grid lines
+      ctx.strokeStyle = 'rgba(79, 209, 197, 0.1)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = (h / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      
+      // Draw threshold line
       const thresholdY = h - (DETECTION_THRESHOLD / 100) * h;
-      ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
+      ctx.strokeStyle = 'rgba(252, 129, 129, 0.6)';
       ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
+      ctx.setLineDash([8, 4]);
       ctx.beginPath();
       ctx.moveTo(0, thresholdY);
       ctx.lineTo(w, thresholdY);
       ctx.stroke();
       ctx.setLineDash([]);
       
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 3;
+      // Draw area under curve
+      ctx.fillStyle = 'rgba(79, 209, 197, 0.15)';
       ctx.beginPath();
-      
       const step = w / MAX_HISTORY;
+      ctx.moveTo(0, h);
+      
+      intensityHistory.forEach((intensity, i) => {
+        const x = i * step;
+        const y = h - Math.max(0, Math.min(100, intensity)) / 100 * h;
+        ctx.lineTo(x, y);
+      });
+      
+      ctx.lineTo((intensityHistory.length - 1) * step, h);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Draw line
+      const lineGradient = ctx.createLinearGradient(0, 0, w, 0);
+      lineGradient.addColorStop(0, '#3182ce');
+      lineGradient.addColorStop(0.5, '#4fd1c5');
+      lineGradient.addColorStop(1, '#48bb78');
+      ctx.strokeStyle = lineGradient;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
       
       intensityHistory.forEach((intensity, i) => {
         const x = i * step;
@@ -656,6 +655,22 @@ async function startCamera() {
       });
       
       ctx.stroke();
+      
+      // Draw current point
+      if (intensityHistory.length > 0) {
+        const lastIntensity = intensityHistory[intensityHistory.length - 1];
+        const lastX = (intensityHistory.length - 1) * step;
+        const lastY = h - Math.max(0, Math.min(100, lastIntensity)) / 100 * h;
+        
+        ctx.fillStyle = lastIntensity >= DETECTION_THRESHOLD ? '#48bb78' : '#4fd1c5';
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
     
     function vibrate() {
