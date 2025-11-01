@@ -614,6 +614,9 @@
     let baselineEstablished = false;
     let currentIntensity = 0;
     let detectionCount = 0;
+    let preferredRearId = null;
+    let preferredFrontId = null;
+
     let frameCount = 0;
     let intensityHistory = [];
     let graphCtx;
@@ -833,268 +836,162 @@
     
     // Camera Setup with Flashlight Support
     async function pickRearCameraDeviceId() {
-      try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = devices.filter(d => d.kind === 'videoinput');
-      const rear = videoInputs.find(d => /back|rear|environment/i.test(d.label || ''));
-      return (rear || videoInputs[videoInputs.length - 1] || {}).deviceId;
-    }
+  // Ensure labels are populated (iOS needs a prior getUserMedia)
+  try {
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    tmp.getTracks().forEach(t => t.stop());
+  } catch {}
 
-    async function startCamera() {
-      const statusBanner = document.getElementById('statusBanner');
-      const statusText = document.getElementById('statusText');
-      try {
-        statusText.textContent = 'Requesting camera...';
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d => d.kind === 'videoinput');
 
-        if (!window.isSecureContext) {
-          throw new Error('Page must be loaded over HTTPS');
-        }
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error('Camera API not supported');
-        }
+  // Prefer labels that look like rear/back
+  const rear = cams.find(d => /back|rear|environment|wide|tele/i.test(d.label || ''));
+  if (rear) return rear.deviceId;
 
-        video.setAttribute('playsinline', '');
-        video.setAttribute('autoplay', '');
-        video.muted = true;
+  // Heuristic fallback (often last is rear on Android)
+  return (cams[cams.length - 1] || {}).deviceId;
+}
 
-        let stream;
-        let lastError;
-
-        // Try progressive fallback strategies
-        const strategies = [
-          // Strategy 1: High quality with specific device
-          async () => {
-            const deviceId = await pickRearCameraDeviceId();
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                frameRate: { ideal: 30 }
-              },
-              audio: false
-            });
-          },
-          // Strategy 2: High quality with facing mode
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: currentFacingMode,
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                frameRate: { ideal: 30 }
-              },
-              audio: false
-            });
-          },
-          // Strategy 3: Medium quality
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: currentFacingMode,
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              },
-              audio: false
-            });
-          },
-          // Strategy 4: Basic with facing mode only
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: currentFacingMode
-              },
-              audio: false
-            });
-          },
-          // Strategy 5: Absolute basic - any camera
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: false
-            });
-          }
-        ];
-
-        for (let i = 0; i < strategies.length; i++) {
-          try {
-            console.log(`Trying camera strategy ${i + 1}/${strategies.length}`);
-            stream = await strategies[i]();
-            console.log(`✓ Strategy ${i + 1} succeeded`);
-            break;
-          } catch (e) {
-            console.log(`✗ Strategy ${i + 1} failed:`, e.message);
-            lastError = e;
-          }
-        }
-
-        if (!stream) throw lastError || new Error('Failed to get camera stream');
-      
-        function gotFrontCamera(track) {
+function isFrontTrack(track) {
   const s = track.getSettings?.() || {};
   const label = track.label || '';
-  return s.facingMode === 'user' || /front|user/i.test(label);
+  return s.facingMode === 'user' || /front|user|trueDepth/i.test(label);
 }
 
-async function startCamera() {
-  // ... your existing preflight code ...
 
-  // Try your strategies as you do now
-  // after you get `stream`:
-  currentStream = stream;
-  const track = stream.getVideoTracks()[0];
 
-  // If we accidentally got front, retry once with strict rear
-  if (gotFrontCamera(track)) {
-    stream.getTracks().forEach(t => t.stop());
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: 'environment' } }, audio: false
-      });
-    } catch {
-      // fall back to deviceId-based rear pick
-      const deviceId = await pickRearCameraDeviceId();
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: deviceId ? { exact: deviceId } : undefined }, audio: false
-      });
+   async function startCamera(desiredFacing = currentFacingMode) {
+  const statusBanner = document.getElementById('statusBanner');
+  const statusText   = document.getElementById('statusText');
+
+  try {
+    statusText.textContent = 'Requesting camera...';
+
+    if (!window.isSecureContext) throw new Error('Page must be loaded over HTTPS');
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera API not supported');
+
+    video.setAttribute('playsinline', '');
+    video.setAttribute('autoplay', '');
+    video.muted = true;
+
+    // Stop any previous stream cleanly
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+      currentStream = null;
     }
-    currentStream = stream;
-  }
 
-  video.srcObject = currentStream;
-  await video.play().catch(() => {});
-  // ... rest of your setup (metadata, canvas, processFrames) ...
-}
+    // Build desired deviceId ladder (rear by default)
+    const wantRear = desiredFacing !== 'user';
+    if (wantRear && !preferredRearId) preferredRearId = await pickRearCameraDeviceId();
 
-
-
-
-        currentStream = stream;
-        video.srcObject = stream;
-        await video.play().catch(() => {});
-
-        // Apply advanced constraints (best effort)
-        const track = stream.getVideoTracks()[0];
-        const caps = track.getCapabilities?.() || {};
-        const settings = track.getSettings();
-        
-        console.log('Camera capabilities:', caps);
-        console.log('Camera settings:', settings);
-        
-        const advanced = [];
-
-        // Focus: Try manual first, then continuous
-        if (caps.focusMode) {
-          if (caps.focusMode.includes('manual')) {
-            advanced.push({ focusMode: 'manual' });
-            // Set focus distance to macro range for close-up (if supported)
-            if (caps.focusDistance) {
-              const midDistance = (caps.focusDistance.min + caps.focusDistance.max) / 2;
-              advanced.push({ focusDistance: midDistance });
-            }
-          } else if (caps.focusMode.includes('continuous')) {
-            advanced.push({ focusMode: 'continuous' });
-          }
-        }
-        
-        // Exposure: Continuous auto-exposure
-        if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
-          advanced.push({ exposureMode: 'continuous' });
-        }
-        
-        // White balance: Continuous
-        if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) {
-          advanced.push({ whiteBalanceMode: 'continuous' });
-        }
-        
-        // ISO: Set lower ISO to reduce noise
-        if (caps.iso) {
-          const lowIso = Math.min(400, caps.iso.max || 400);
-          advanced.push({ iso: lowIso });
-        }
-        
-        // Exposure compensation: Slight increase for better skin detail
-        if (caps.exposureCompensation) {
-          advanced.push({ exposureCompensation: 0.5 });
-        }
-        
-        // Sharpness: Increase if available
-        if (caps.sharpness) {
-          const maxSharp = caps.sharpness.max || 5;
-          advanced.push({ sharpness: Math.min(5, maxSharp) });
-        }
-
-        if (advanced.length) {
-          try { 
-            await track.applyConstraints({ advanced }); 
-            console.log('✓ Applied advanced constraints:', advanced);
-          } catch (e) {
-            console.log('Advanced constraints failed (non-critical):', e.message);
-          }
-        }
-
-        isRunning = true;
-        document.getElementById('startBtn').style.display = 'none';
-        document.getElementById('stopBtn').style.display = 'block';
-        document.getElementById('switchCameraBtn').style.display = 'flex';
-        document.getElementById('instructions').style.display = 'none';
-
-        await new Promise(r => {
-          if (video.readyState >= 1) return r();
-          video.onloadedmetadata = () => r();
-          setTimeout(r, 1000);
+    const ladders = [
+      // 1) Exact deviceId if we have it
+      async () => {
+        const id = wantRear ? preferredRearId : preferredFrontId;
+        if (!id) throw new Error('no preferred id yet');
+        return navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: id }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+          audio: false
         });
-
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        
-        console.log(`✓ Camera started: ${video.videoWidth}×${video.videoHeight}`);
-        document.getElementById('debugRes').textContent = `${video.videoWidth}×${video.videoHeight}`;
-        statusText.textContent = `Ready: ${video.videoWidth}×${video.videoHeight}`;
-
-        processFrames();
-
-        // Check torch capability
-        checkTorchSupport();
-
-      } catch (error) {
-        console.error('Camera setup error:', error);
-        let errorMsg;
-        
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-          errorMsg = 'Camera permission denied.\n\n1. Tap the lock icon in address bar\n2. Enable Camera permission\n3. Reload the page';
-        } else if (error.name === 'NotFoundError') {
-          errorMsg = 'No camera found on this device.';
-        } else if (error.name === 'NotReadableError') {
-          errorMsg = 'Camera is already in use by another app.\n\nClose other camera apps and try again.';
-        } else if (error.name === 'OverconstrainedError') {
-          errorMsg = 'Camera does not support required features.\n\nTrying basic mode...';
-          // Try one more time with absolute minimum
-          setTimeout(async () => {
-            try {
-              const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-              currentStream = stream;
-              video.srcObject = stream;
-              await video.play();
-              isRunning = true;
-              document.getElementById('startBtn').style.display = 'none';
-              document.getElementById('stopBtn').style.display = 'block';
-              document.getElementById('switchCameraBtn').style.display = 'flex';
-              processFrames();
-            } catch (e) {
-              alert('Camera still failed: ' + e.message);
-            }
-          }, 1000);
-          return;
-        } else {
-          errorMsg = `Camera error: ${error.message || error.name}\n\nTry:\n• Refresh the page\n• Use Chrome or Safari\n• Check camera permissions`;
+      },
+      // 2) facingMode EXACT (many browsers honor this)
+      async () => navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: wantRear ? 'environment' : 'user' }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio: false
+      }),
+      // 3) facingMode hint
+      async () => navigator.mediaDevices.getUserMedia({
+        video: { facingMode: wantRear ? 'environment' : 'user', width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      }),
+      // 4) Try every camera deviceId until one matches the side we want
+      async () => {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput');
+        for (const d of cams) {
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: d.deviceId } }, audio: false });
+            const tr = s.getVideoTracks()[0];
+            const gotFront = isFrontTrack(tr);
+            if ((wantRear && !gotFront) || (!wantRear && gotFront)) return s;
+            s.getTracks().forEach(t => t.stop());
+          } catch {}
         }
-        
-        alert(errorMsg);
-        statusText.textContent = 'Camera error';
-        statusBanner.classList.add('baseline');
+        throw new Error('No usable camera for desired side');
       }
+    ];
+
+    // Run ladder
+    let stream, lastErr;
+    for (const rung of ladders) {
+      try { stream = await rung(); break; } catch (e) { lastErr = e; }
     }
+    if (!stream) throw lastErr || new Error('Failed to get camera stream');
+
+    // Verify side; if wrong, do one corrective retry
+    let track = stream.getVideoTracks()[0];
+    const gotFront = isFrontTrack(track);
+    const wrongSide = wantRear ? gotFront : !gotFront;
+
+    if (wrongSide) {
+      stream.getTracks().forEach(t => t.stop());
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: wantRear ? 'environment' : 'user' } },
+          audio: false
+        });
+      } catch {
+        const id = wantRear ? await pickRearCameraDeviceId() : null;
+        if (!id) throw new Error('Could not select desired camera');
+        stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: id } }, audio: false });
+      }
+      track = stream.getVideoTracks()[0];
+    }
+
+    // Cache which id is front/rear for fast switches
+    const settings = track.getSettings?.() || {};
+    if (settings.deviceId) {
+      if (isFrontTrack(track)) preferredFrontId = settings.deviceId;
+      else preferredRearId = settings.deviceId;
+    }
+
+    // Bind & play
+    currentStream = stream;
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+
+    isRunning = true;
+    document.getElementById('startBtn').style.display = 'none';
+    document.getElementById('stopBtn').style.display = 'block';
+    document.getElementById('switchCameraBtn').style.display = 'flex';
+    document.getElementById('instructions').style.display = 'none';
+
+    await new Promise(r => {
+      if (video.readyState >= 1) return r();
+      video.onloadedmetadata = () => r();
+      setTimeout(r, 800);
+    });
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    document.getElementById('debugRes').textContent = `${video.videoWidth}×${video.videoHeight}`;
+    statusText.textContent = `Ready: ${video.videoWidth}×${video.videoHeight}`;
+
+    processFrames();
+    checkTorchSupport();
+
+  } catch (error) {
+    console.error('Camera setup error:', error);
+    alert(
+      (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError')
+        ? 'Camera permission denied. Enable camera in site settings and reload.'
+        : `Camera error: ${error.message || error.name}`
+    );
+    statusText.textContent = 'Camera error';
+    statusBanner.classList.add('baseline');
+  }
+}
 
     async function checkTorchSupport() {
       try {
@@ -1195,14 +1092,20 @@ async function startCamera() {
       }
     }
 
-    async function switchCamera() {
-      if (!isRunning) return;
-      
-      stopCamera();
-      currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-      await new Promise(r => setTimeout(r, 300));
-      startCamera();
-    }
+   async function switchCamera() {
+  // Stop current stream
+  if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+  isRunning = false;
+
+  // Flip desired side
+  currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+
+  // Small delay so OS releases the camera
+  await new Promise(r => setTimeout(r, 200));
+
+  // Start with the chosen side
+  startCamera(currentFacingMode);
+}
 
     function stopCamera() {
       isRunning = false;
