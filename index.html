@@ -1228,35 +1228,39 @@ async function pickRearCameraDeviceId() {
     }
     
     // UI Updates
-    function updateUI(status, intensity, power) {
-      const statusBanner = document.getElementById('statusBanner');
-      const statusText = document.getElementById('statusText');
-      const intensityDisplay = document.getElementById('intensityDisplay');
-      const roiBox = document.getElementById('roiBox');
-      
-      statusBanner.className = 'status-banner ' + status;
-      
-      if (status === 'baseline') {
-        statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
-        roiBox.classList.remove('detecting');
-        intensityDisplay.classList.remove('high');
-      } else if (status === 'detecting') {
-        statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
-        roiBox.classList.add('detecting');
-        intensityDisplay.classList.add('high');
-      } else {
-        statusText.textContent = `Monitoring...`;
-        roiBox.classList.remove('detecting');
-        intensityDisplay.classList.remove('high');
-      }
-      
-      intensityDisplay.textContent = intensity.toFixed(1) + '%';
-      
-      document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
-      document.getElementById('statCurrent').textContent = power.toFixed(2);
-      document.getElementById('statDetections').textContent = detectionCount;
-    }
-    
+   
+    function updateUI(status = 'idle', intensity = 0, power = 0) {
+  const statusBanner = document.getElementById('statusBanner');
+  const statusText   = document.getElementById('statusText');
+  const intensityDisplay = document.getElementById('intensityDisplay');
+  const roiBox = document.getElementById('roiBox');
+
+  const safe = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '--';
+
+  statusBanner.className = 'status-banner ' + status;
+
+  if (status === 'baseline') {
+    statusText.textContent = `Calibrating: ${baselineFrames.length}/${BASELINE_FRAMES}`;
+    roiBox.classList.remove('detecting');
+    intensityDisplay.classList.remove('high');
+  } else if (status === 'detecting') {
+    statusText.textContent = `🎉 GOOSEBUMPS DETECTED!`;
+    roiBox.classList.add('detecting');
+    intensityDisplay.classList.add('high');
+  } else {
+    statusText.textContent = `Monitoring...`;
+    roiBox.classList.remove('detecting');
+    intensityDisplay.classList.remove('high');
+  }
+
+  intensityDisplay.textContent = `${safe(intensity, 1)}%`;
+
+  // Safely render stats
+  document.getElementById('statBaseline').textContent = safe(baselinePower, 2);
+  document.getElementById('statCurrent').textContent  = safe(power, 2);
+  document.getElementById('statDetections').textContent = detectionCount;
+}
+
     function drawGraph() {
       const canvas = document.getElementById('graphCanvas');
       const ctx = graphCtx;
