@@ -572,11 +572,12 @@
         intensityDisplay.classList.remove('high');
       }
       
-      intensityDisplay.textContent = intensity.toFixed(1) + '%';
+      // Use default values when values are undefined or reset
+      intensityDisplay.textContent = (intensity || 0).toFixed(1) + '%';
       
-      document.getElementById('statBaseline').textContent = baselinePower.toFixed(2);
-      document.getElementById('statCurrent').textContent = power.toFixed(2);
-      document.getElementById('statDetections').textContent = detectionCount;
+      document.getElementById('statBaseline').textContent = (baselinePower || 0).toFixed(2);
+      document.getElementById('statCurrent').textContent = (power || 0).toFixed(2);
+      document.getElementById('statDetections').textContent = detectionCount || 0;
     }
     
     function drawGraph() {
