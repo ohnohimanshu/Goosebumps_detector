@@ -997,6 +997,7 @@
         isRunning = true;
         document.getElementById('startBtn').style.display = 'none';
         document.getElementById('stopBtn').style.display = 'block';
+        document.getElementById('switchCameraBtn').style.display = 'flex';
         document.getElementById('instructions').style.display = 'none';
 
         await new Promise(r => {
@@ -1039,6 +1040,7 @@
               isRunning = true;
               document.getElementById('startBtn').style.display = 'none';
               document.getElementById('stopBtn').style.display = 'block';
+              document.getElementById('switchCameraBtn').style.display = 'flex';
               processFrames();
             } catch (e) {
               alert('Camera still failed: ' + e.message);
@@ -1175,6 +1177,7 @@
       document.getElementById('startBtn').style.display = 'block';
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('flashBtn').style.display = 'none';
+      document.getElementById('switchCameraBtn').style.display = 'none';
       resetState();
     }
     
