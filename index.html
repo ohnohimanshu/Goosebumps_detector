@@ -828,13 +828,21 @@
     });
     
     // Camera Setup with Flashlight Support
-    async function pickRearCameraDeviceId() {
-      try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = devices.filter(d => d.kind === 'videoinput');
-      const rear = videoInputs.find(d => /back|rear|environment/i.test(d.label || ''));
-      return (rear || videoInputs[videoInputs.length - 1] || {}).deviceId;
-    }
+async function pickRearCameraDeviceId() {
+  // Get a temp permission so labels are available (iOS needs this)
+  try { await navigator.mediaDevices.getUserMedia({ video: true }); } catch {}
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d => d.kind === 'videoinput');
+
+  // Prefer anything that looks like a back/rear/wide camera
+  const rearLike = cams.find(d => /back|rear|environment|wide/i.test(d.label || ''));
+  if (rearLike) return rearLike.deviceId;
+
+  // Fallback: last camera is often rear on Android
+  return (cams[cams.length - 1] || {}).deviceId;
+}
+
 
     async function startCamera() {
       const statusBanner = document.getElementById('statusBanner');
@@ -857,60 +865,51 @@
         let lastError;
 
         // Try progressive fallback strategies
-        const strategies = [
-          // Strategy 1: High quality with specific device
-          async () => {
-            const deviceId = await pickRearCameraDeviceId();
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                frameRate: { ideal: 30 }
-              },
-              audio: false
-            });
-          },
-          // Strategy 2: High quality with facing mode
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: currentFacingMode,
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                frameRate: { ideal: 30 }
-              },
-              audio: false
-            });
-          },
-          // Strategy 3: Medium quality
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: currentFacingMode,
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              },
-              audio: false
-            });
-          },
-          // Strategy 4: Basic with facing mode only
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: currentFacingMode
-              },
-              audio: false
-            });
-          },
-          // Strategy 5: Absolute basic - any camera
-          async () => {
-            return navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: false
-            });
-          }
-        ];
+       const strategies = [
+  // 1) Force rear by facingMode EXACT (works on most browsers)
+  async () => navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { exact: 'environment' },
+      width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
+    },
+    audio: false
+  }),
+
+  // 2) Pick rear by deviceId (after permission, labels available)
+  async () => {
+    const deviceId = await pickRearCameraDeviceId();
+    return navigator.mediaDevices.getUserMedia({
+      video: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
+      },
+      audio: false
+    });
+  },
+
+  // 3) Hint (non-exact) rear + 1080p
+  async () => navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: 'environment',
+      width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }
+    },
+    audio: false
+  }),
+
+  // 4) Hint rear + 720p
+  async () => navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: 'environment',
+      width: { ideal: 1280 }, height: { ideal: 720 }
+    },
+    audio: false
+  }),
+
+  // 5) Last resort: any camera
+  async () => navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+];
+
+
 
         for (let i = 0; i < strategies.length; i++) {
           try {
